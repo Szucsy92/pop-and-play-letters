@@ -20,7 +20,7 @@ type Mode = "inner" | "native";
 type Shown = { id: number; ch: string; color: string; anim: number };
 type Bit = { id: number; x: number; y: number; dx: number; dy: number; r: number; color: string; kind: number };
 
-const COLORS = ["var(--kid-1)", "var(--kid-2)", "var(--kid-3)", "var(--kid-4)", "var(--kid-5)", "var(--kid-6)"];
+const COLORS: string[] = ["var(--kid-1)", "var(--kid-2)", "var(--kid-3)", "var(--kid-4)", "var(--kid-5)", "var(--kid-6)"];
 const ROWS = [
   "1234567890".split(""),
   "QWERTZUIOP".split(""),
@@ -76,11 +76,11 @@ function Index() {
     if (!ch || ch === " ") return;
     const seed = ch.charCodeAt(0);
     if (sound) (seed % 3 === 0 ? playPop() : playXylo(seed));
-    setShown({ id: ++uid, ch: ch.toUpperCase(), color: COLORS[seed % COLORS.length], anim: seed % 4 });
+    setShown({ id: ++uid, ch: ch.toUpperCase(), color: COLORS[seed % COLORS.length]!, anim: seed % 4 });
     const n: Bit[] = Array.from({ length: 22 }, (_, i) => {
       const ang = Math.random() * Math.PI * 2;
       const dist = 120 + Math.random() * 260;
-      return { id: ++uid, x: 50, y: 40, dx: Math.cos(ang) * dist, dy: Math.sin(ang) * dist, r: Math.random() * 720 - 360, color: COLORS[(i + seed) % COLORS.length], kind: i % 5 === 0 ? 1 : 0 };
+      return { id: ++uid, x: 50, y: 40, dx: Math.cos(ang) * dist, dy: Math.sin(ang) * dist, r: Math.random() * 720 - 360, color: COLORS[(i + seed) % COLORS.length]!, kind: i % 5 === 0 ? 1 : 0 };
     });
     setBits(n);
   }, [sound]);
