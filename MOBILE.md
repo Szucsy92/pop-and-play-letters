@@ -17,7 +17,10 @@ GitHub → a projekt → Settings → Secrets and variables → Actions → New 
 
 Nem generálunk minden futáskor új kulcsot. Hiányzó kulcs esetén az APK-készítés leáll.
 
-## Frissítés (a feltöltött mintával egyezően)
+## Frissítés az appon belül (OTA)
+A szülői menü **Frissítés keresése** gombja után a **Frissítés telepítése** az appban letölti az új APK-t, majd megnyitja a rendszer telepítőjét. Első alkalommal a telefon rákérdez a „telepítés ismeretlen forrásból” engedélyre ennél az appnál. Ugyanaz a kulcs és alkalmazásazonosító kell, ekkor a frissítés a meglévő appra települ. Az Android-oldali kódot a CI a `scripts/android/` mappából másolja be.
+
+## Frissítés (korábbi leírás)
 A szülői menü **Frissítés keresése** gombja az újabb GitHub-kiadást keresi. **Új APK letöltése** megnyitja a letöltést; a telefonon engedélyezni kell a telepítést. Ez internetes APK-frissítés, nem csendes háttértelepítés és nem külön webes OTA-csomag. A játék frissítés nélkül is offline marad. iPhone-on az új IPA-t ismét telepíteni/aláírni kell.
 
 A frissítésellenőrzéshez nyilvánosan elérhető GitHub Releases szükséges. Privát projekt esetén az APK/IPA a GitHubba bejelentkezve letölthető, de az alkalmazás frissítésellenőrzése nem működik; privát hozzáférési kulcsot nem építünk a játékba. Ha a forrásnak privátnak kell maradnia, külön nyilvános kiadási hely szükséges.
