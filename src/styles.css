@@ -153,3 +153,44 @@
     color: var(--color-foreground);
   }
 }
+
+:root {
+  --background: oklch(0.2 0.04 280);
+  --foreground: oklch(0.96 0.01 280);
+  --primary: oklch(0.78 0.16 150);
+  --primary-foreground: oklch(0.2 0.04 280);
+  --secondary: oklch(0.32 0.05 280);
+  --secondary-foreground: oklch(0.96 0.01 280);
+  --muted-foreground: oklch(0.72 0.03 280);
+  --kid-1: oklch(0.75 0.2 25);
+  --kid-2: oklch(0.85 0.17 85);
+  --kid-3: oklch(0.8 0.18 145);
+  --kid-4: oklch(0.75 0.15 230);
+  --kid-5: oklch(0.72 0.2 320);
+  --kid-6: oklch(0.8 0.15 50);
+}
+
+html, body { overscroll-behavior: none; overflow: hidden; touch-action: none; user-select: none; -webkit-user-select: none; -webkit-touch-callout: none; -webkit-tap-highlight-color: transparent; }
+
+.kid-root { position: fixed; inset: 0; overflow: hidden; font-family: "Fredoka", system-ui, sans-serif;
+  background: radial-gradient(circle at 50% 35%, oklch(0.28 0.06 285), var(--background) 70%); color: var(--foreground); }
+.kid-btn { width: min(90vw, 360px); padding: 1rem; border-radius: 1.25rem; font-size: 1.35rem; font-weight: 700; }
+.kid-key { border-radius: 0.9rem; font-family: "Fredoka", sans-serif; font-weight: 700; font-size: clamp(1rem, 5vw, 2rem);
+  color: var(--background); box-shadow: 0 4px 0 oklch(0 0 0 / 0.35); transition: transform .08s; touch-action: none; }
+.kid-key:active { transform: translateY(3px) scale(.96); box-shadow: 0 1px 0 oklch(0 0 0 / 0.35); }
+
+.kid-char { position: absolute; font-weight: 700; font-size: min(55vw, 38vh); line-height: 1;
+  text-shadow: 0 .06em 0 oklch(0 0 0 / .35); animation-duration: 1.6s; animation-fill-mode: forwards; animation-timing-function: cubic-bezier(.2,.9,.3,1.2); }
+.kid-anim-0 { animation-name: kid-pop; }
+.kid-anim-1 { animation-name: kid-wiggle; }
+.kid-anim-2 { animation-name: kid-bounce; }
+.kid-anim-3 { animation-name: kid-spin; }
+@keyframes kid-pop { 0% { transform: scale(0); opacity: 0 } 20% { transform: scale(1.15); opacity: 1 } 35% { transform: scale(1) } 75% { opacity: 1 } 100% { transform: scale(.6); opacity: 0 } }
+@keyframes kid-wiggle { 0% { transform: scale(0) rotate(0) } 20% { transform: scale(1) rotate(-10deg) } 35% { transform: rotate(8deg) } 50% { transform: rotate(-4deg) } 75% { opacity: 1; transform: rotate(0) } 100% { opacity: 0; transform: scale(.7) } }
+@keyframes kid-bounce { 0% { transform: translateY(-60vh) } 25% { transform: translateY(0) scaleY(.85) } 35% { transform: translateY(-8%) } 45% { transform: translateY(0) } 75% { opacity: 1 } 100% { opacity: 0; transform: translateY(10%) } }
+@keyframes kid-spin { 0% { transform: rotate(-200deg) scale(0) } 30% { transform: rotate(0) scale(1) } 75% { opacity: 1 } 100% { opacity: 0; transform: scale(1.3) } }
+
+.kid-confetti, .kid-curl { position: absolute; left: 50%; top: 50%; animation: kid-fly 1.4s ease-out forwards; pointer-events: none; }
+.kid-confetti { width: 12px; height: 18px; border-radius: 3px; }
+.kid-curl { width: 40px; height: 40px; border: 5px solid currentColor; border-radius: 50%; border-right-color: transparent; border-bottom-color: transparent; }
+@keyframes kid-fly { 0% { transform: translate(-50%,-50%) rotate(0); opacity: 1 } 100% { transform: translate(calc(-50% + var(--dx)), calc(-50% + var(--dy) + 80px)) rotate(var(--r)); opacity: 0 } }
