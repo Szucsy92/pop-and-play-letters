@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { playPop, playXylo } from "@/lib/sound";
+import { playPop, playXylo, unlockAudio } from "@/lib/sound";
 import { MobileRelease, exitNative } from "@/components/MobileRelease";
 type Mode = "inner" | "native";
 type Shown = { id: number; ch: string; color: string; anim: number };
@@ -22,13 +22,31 @@ export function KeypadGame() {
   const [menu, setMenu] = useState(false);
   const [sound, setSound] = useState(true);
   const [exited, setExited] = useState(false);
+  const [kbInset, setKbInset] = useState(0);
   const taps = useRef<number[]>([]);
   const inputRef = useRef<HTMLInputElement>(null);
+  const menuRef = useRef(false);
+  menuRef.current = menu;
 
   useEffect(() => {
     const m = localStorage.getItem("kidkb-mode") as Mode | null;
     if (m) setMode(m);
   }, []);
+
+  // Telefon saját billentyűzete: a betű a látható terület közepére kerüljön, ne a billentyűzet mögé.
+  // Ha az ablak magától átméreteződik (adjustResize), az eltolás 0 marad.
+  useEffect(() => {
+    const vv = window.visualViewport;
+    if (mode !== "native" || menu || !vv) { setKbInset(0); return; }
+    const update = () => {
+      const hidden = Math.round(window.innerHeight - (vv.height + vv.offsetTop));
+      setKbInset(hidden > 80 ? hidden : 0);
+    };
+    update();
+    vv.addEventListener("resize", update);
+    vv.addEventListener("scroll", update);
+    return () => { vv.removeEventListener("resize", update); vv.removeEventListener("scroll", update); };
+  }, [mode, menu]);
 
   // Block gestures, context menu, back navigation
   useEffect(() => {
@@ -80,6 +98,7 @@ export function KeypadGame() {
   const choose = (m: Mode) => {
     localStorage.setItem("kidkb-mode", m);
     setMode(m);
+    unlockAudio();
     goFull();
     if (m === "native") setTimeout(() => inputRef.current?.focus(), 50);
   };
@@ -107,7 +126,7 @@ export function KeypadGame() {
       <button aria-label="Lakat" onPointerDown={(e) => { e.stopPropagation(); lockTap(); }} className="absolute right-3 top-3 z-30 grid h-12 w-12 place-items-center rounded-full text-2xl opacity-40">🔒</button>
 
       {/* stage */}
-      <div className={`absolute inset-x-0 top-0 flex items-center justify-center ${mode === "inner" ? "bottom-[46%]" : "bottom-0"}`}>
+      <div className={`absolute inset-x-0 top-0 flex items-center justify-center ${mode === "inner" ? "bottom-[46%]" : "bottom-0"}`} style={mode === "native" && kbInset ? { bottom: kbInset } : undefined}>
         {bits.map((b) => (
           <span key={b.id} className={b.kind ? "kid-curl" : "kid-confetti"} style={{ ["--dx" as any]: `${b.dx}px`, ["--dy" as any]: `${b.dy}px`, ["--r" as any]: `${b.r}deg`, color: b.color, background: b.kind ? "transparent" : b.color }} />
         ))}
@@ -117,7 +136,8 @@ export function KeypadGame() {
       </div>
 
       {mode === "native" && (
-        <input ref={inputRef} className="absolute -left-[9999px] opacity-0" autoCapitalize="characters" autoCorrect="off" autoComplete="off" spellCheck={false}
+        <input ref={inputRef} className="fixed bottom-0 left-0 h-px w-px opacity-0" inputMode="text" enterKeyHint="done" autoCapitalize="characters" autoCorrect="off" autoComplete="off" spellCheck={false} aria-label="Billentyűzet"
+          onBlur={() => { if (!menuRef.current) setTimeout(() => { if (!menuRef.current) inputRef.current?.focus(); }, 120); }}
           onInput={(e) => { const v = e.currentTarget.value; if (v) press(v.slice(-1)); e.currentTarget.value = ""; }} />
       )}
 
