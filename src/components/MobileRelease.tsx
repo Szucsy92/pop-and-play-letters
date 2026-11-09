@@ -11,9 +11,9 @@ export function MobileRelease() {
   const [busy, setBusy] = useState(false);
   const [release, setRelease] = useState<Release | null>(null);
   if (!Capacitor.isNativePlatform()) return null;
-  const version = import.meta.env.VITE_APP_VERSION || 'Helyi változat';
-  const repository = import.meta.env.VITE_RELEASE_REPOSITORY || '';
-  const currentCode = Number(import.meta.env.VITE_APP_VERSION_CODE || 0);
+  const version = import.meta.env['VITE_APP_VERSION'] || 'Helyi változat';
+  const repository = import.meta.env['VITE_RELEASE_REPOSITORY'] || '';
+  const currentCode = Number(import.meta.env['VITE_APP_VERSION_CODE'] || 0);
   const android = Capacitor.getPlatform() === 'android';
   return <div className="flex max-w-sm flex-col items-center gap-2 text-center">
     <p className="text-sm text-muted-foreground">Verzió: {version}</p>
