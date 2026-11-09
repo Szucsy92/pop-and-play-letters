@@ -10,7 +10,7 @@ const NOTES = [523.25, 587.33, 659.25, 783.99, 880, 1046.5, 1174.66, 1318.51];
 
 export function playXylo(seed: number) {
   const a = ac();
-  const f = NOTES[Math.abs(seed) % NOTES.length];
+  const f = NOTES[Math.abs(seed) % NOTES.length] ?? 523.25;
   const t = a.currentTime;
   const g = a.createGain();
   g.gain.setValueAtTime(0.0001, t);
