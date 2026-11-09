@@ -28,3 +28,8 @@ use the editor.
   own key and store it in Secrets.
 - **Secrets.** Lovable manages them. Do not put secret values in the repo.
 <!-- LOVABLE:END -->
+
+## Mobile delivery
+- Keep TanStack deployment unchanged; Capacitor uses a separate browser-only Vite entry sharing KeypadGame so bundled gameplay works offline.
+- Android updates are parent-initiated GitHub Release APK downloads, not silent installs; keep app ID and signing key stable.
+- Generate native projects in CI; never commit signing material or embed private release access tokens in the app.
