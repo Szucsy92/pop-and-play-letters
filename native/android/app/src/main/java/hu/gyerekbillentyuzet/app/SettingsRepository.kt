@@ -11,9 +11,12 @@ private val Context.dataStore by preferencesDataStore(name = "kid_settings")
 
 class SettingsRepository(private val context: Context) {
     private val soundKey = booleanPreferencesKey("sound_enabled")
-    private val modeKey = stringPreferencesKey("keyboard_mode")
+    private val modeKey = stringPreferencesKey("kidkb_mode")
     val sound = context.dataStore.data.map { it[soundKey] ?: true }
-    val mode = context.dataStore.data.map { it[modeKey] ?: "inner" }
+
+    /** null = még nem választott billentyűzet-módot (a webes változathoz hasonlóan ilyenkor a választó látszik). */
+    val mode = context.dataStore.data.map { it[modeKey] }
+
     suspend fun setSound(value: Boolean) { context.dataStore.edit { it[soundKey] = value } }
     suspend fun setMode(value: String) { context.dataStore.edit { it[modeKey] = value } }
 }
