@@ -86,7 +86,7 @@ jobs:
           ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
         run: |
           set -euo pipefail
-          gradle -p native/android assembleRelease --no-daemon --stacktrace
+          gradle -p native/android assembleRelease --no-daemon
           mkdir -p out
           cp native/android/app/build/outputs/apk/release/app-release.apk "out/gyerek-billentyuzet-native-${BUILD_STAMP}.apk"
           APKSIGNER=$(printf '%s\n' "$ANDROID_HOME"/build-tools/*/apksigner | sort -V | tail -n1)
@@ -96,7 +96,7 @@ jobs:
         if: steps.ks.outputs.signed != 'true'
         run: |
           set -euo pipefail
-          gradle -p native/android assembleDebug --no-daemon --stacktrace
+          gradle -p native/android assembleDebug --no-daemon
           mkdir -p out
           cp native/android/app/build/outputs/apk/debug/app-debug.apk "out/gyerek-billentyuzet-native-${BUILD_STAMP}-debug.apk"
 
