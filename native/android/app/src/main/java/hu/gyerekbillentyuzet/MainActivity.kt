@@ -449,14 +449,14 @@ private fun sparklePath(r: Float): Path {
     return path
 }
 
-/// Meseszerű betű: optimalizált méret és körvonal az elvágásmentes megjelenésért.
+/// Meseszerű betű: nagyobb karakterek és erős, élénk háttérfény (glow).
 @Composable
 private fun BigChar(ch: String, colorIdx: Int, cell: Float, glow: State<Float>? = null) {
     val c = KidColors[colorIdx]
     val density = LocalDensity.current
     val outlinePx = with(density) { (cell * 0.045f).dp.toPx() }
     val story = ch.isNotEmpty() && ch.all { it.isLetterOrDigit() }
-    val fs = (cell * 0.75f).sp
+    val fs = (cell * 0.88f).sp
     val light = lerp(c, Color.White, 0.50f)
     val deep = lerp(c, Color.Black, 0.38f)
     val fillBrush = Brush.verticalGradient(listOf(light, c, lerp(c, deep, 0.45f)))
@@ -466,12 +466,12 @@ private fun BigChar(ch: String, colorIdx: Int, cell: Float, glow: State<Float>? 
             .size(cell.dp)
             .drawBehind {
                 val g = glow?.value ?: 0.4f
-                val r = size.minDimension * 0.78f
+                val r = size.minDimension * 0.95f
                 drawCircle(
                     Brush.radialGradient(
-                        0f to c.copy(alpha = 0.50f * g),
-                        0.45f to c.copy(alpha = 0.26f * g),
-                        0.75f to c.copy(alpha = 0.08f * g),
+                        0f to c.copy(alpha = 0.75f * g),
+                        0.45f to c.copy(alpha = 0.45f * g),
+                        0.75f to c.copy(alpha = 0.15f * g),
                         1f to Color.Transparent,
                         center = center, radius = r,
                     ),
