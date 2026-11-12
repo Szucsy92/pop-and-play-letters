@@ -61,7 +61,6 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.drawBehind
-import androidx.compose.ui.draw.drawWithContent
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.geometry.CornerRadius
@@ -462,8 +461,6 @@ private fun HistoryPanel(history: String, bump: Long, modifier: Modifier) {
     }
 }
 
-private val SparkleColor = Color(0xFFFFF6C8)
-
 /** Négyágú "tündérpor" csillag a nullpont körül. */
 private fun sparklePath(r: Float): Path {
     val path = Path()
@@ -473,36 +470,15 @@ private fun sparklePath(r: Float): Path {
     return path
 }
 
-/** Három pislákoló csillag a betű szélén (nem kör, nem négyzet: apró varázsszikrák). */
-private fun DrawScope.drawSparkles(t: Float, seed: Int) {
-    val cellPx = size.minDimension
-    val spots = listOf(Offset(0.06f, 0.20f), Offset(0.95f, 0.32f), Offset(0.82f, 0.95f))
-    spots.forEachIndexed { i, o ->
-        val ph = (t * 2f + i * 0.34f + seed * 0.13f) % 1f
-        val k = sin(ph * PI.toFloat()).coerceAtLeast(0f)
-        if (k <= 0.02f) return@forEachIndexed
-        val r = cellPx * (0.03f + 0.085f * k)
-        translate(o.x * cellPx, o.y * cellPx) {
-            rotate(ph * 90f, Offset.Zero) {
-                drawPath(sparklePath(r), SparkleColor.copy(alpha = (0.3f + 0.7f * k).coerceIn(0f, 1f)))
-            }
-        }
-    }
-}
-
 /**
- * Meseszerű betű: a fény a betű saját körvonalát követi (árnyék-alapú glow, nincs négyzet/kör panel),
- * a betű mesekönyv-stílusú: sötétebb körvonal, felül világos, alul telt színátmenet, szélén pislákoló csillagok.
- * Rétegek alulról: glow -> körvonal -> kitöltés. Az emoji / szimbólum egyszerűbb: glow + éles karakter.
+ * Meseszerű betű: átlátszó háttér, mögötte puha, fátyolos kör alakú fény, ami szélén teljesen átlátszóra fakul,
+ * ezért sehol nem látszik éle és nincs elvágva (nincs Text-árnyék, ami a szövegdoboz szélén levágódna).
+ * A betű mesekönyv-stílusú: sötétebb körvonal + színátmenetes kitöltés. Az emoji/szimbólum csak a fényt kapja.
  */
 @Composable
-private fun BigChar(
-    ch: String, colorIdx: Int, cell: Float,
-    glow: State<Float>? = null, twinkle: State<Float>? = null,
-) {
+private fun BigChar(ch: String, colorIdx: Int, cell: Float, glow: State<Float>? = null) {
     val c = KidColors[colorIdx]
     val density = LocalDensity.current
-    val glowPx = with(density) { (cell * 0.30f).dp.toPx() }
     val outlinePx = with(density) { (cell * 0.065f).dp.toPx() }
     val story = ch.isNotEmpty() && ch.all { it.isLetterOrDigit() }
     val fs = (cell * 0.9f).sp
@@ -513,27 +489,24 @@ private fun BigChar(
     Box(
         Modifier
             .size(cell.dp)
-            .drawWithContent {
-                drawContent()
-                if (story && twinkle != null) drawSparkles(twinkle.value, colorIdx)
+            .drawBehind {
+                // A rajz a Box határán túl is folytatódhat; a gradiens a sugár végén 0 alfára fakul -> nincs él.
+                val g = glow?.value ?: 0.4f
+                val r = size.minDimension * 0.78f
+                drawCircle(
+                    Brush.radialGradient(
+                        0f to c.copy(alpha = 0.50f * g),
+                        0.45f to c.copy(alpha = 0.26f * g),
+                        0.75f to c.copy(alpha = 0.08f * g),
+                        1f to Color.Transparent,
+                        center = center, radius = r,
+                    ),
+                    radius = r, center = center,
+                )
             },
         contentAlignment = Alignment.Center,
     ) {
-        // 1) Glow: a betű alakját követő, elmosott árnyék. Az erősség (új betűnél nagyobb) a rétegen animálódik.
-        Text(
-            ch,
-            modifier = Modifier.graphicsLayer {
-                alpha = (0.35f + 0.6f * (glow?.value ?: 0.4f)).coerceIn(0f, 1f)
-                compositingStrategy = CompositingStrategy.ModulateAlpha // nincs levágó puffer -> nincs négyzetes él
-            },
-            style = TextStyle(
-                color = c, fontSize = fs, lineHeight = fs,
-                fontWeight = FontWeight.Bold, fontFamily = KidFont,
-                shadow = Shadow(c, Offset.Zero, glowPx),
-            ),
-        )
         if (story) {
-            // 2) Sötét mesekönyv-körvonal
             Text(
                 ch,
                 style = TextStyle(
@@ -542,7 +515,6 @@ private fun BigChar(
                     drawStyle = Stroke(width = outlinePx * 2f, cap = StrokeCap.Round, join = StrokeJoin.Round),
                 ),
             )
-            // 3) Színátmenetes kitöltés
             Text(
                 ch,
                 style = TextStyle(
@@ -587,7 +559,7 @@ private fun TypedChar(t: Typed, slot: Int, total: Int, sw: Float, cell: Float, c
                 compositingStrategy = CompositingStrategy.ModulateAlpha // a glow ne vágódjon négyzetre
             },
         contentAlignment = Alignment.Center,
-    ) { BigChar(t.ch, t.colorIdx, cell, glow.asState(), bob) }
+    ) { BigChar(t.ch, t.colorIdx, cell, glow.asState()) }
 }
 
 /** Az 5 betű hullámszerűen felrepül a begépelt szövegbe (kis "lendület-vétellel"), közben kicsinyedve elhalványul. */
