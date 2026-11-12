@@ -308,7 +308,8 @@ private struct StageView: View {
 
     var body: some View {
         let cell = min(w * 0.19, h * 0.34)
-        let cy = h * 0.60
+        // A sor középpontja: a szöveg-panel alatt, de a (billentyűzet miatt lecsökkent) színpadon belül marad.
+        let cy = min(max(h * 0.60, 64 + 134 + cell / 2 + 6), h - cell / 2 - 8)
         ZStack {
             HistoryPanel(history: vm.history, bump: vm.bump)
                 .frame(width: w)
