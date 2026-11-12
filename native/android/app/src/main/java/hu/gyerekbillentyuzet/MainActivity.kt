@@ -104,7 +104,6 @@ import hu.gyerekbillentyuzet.feature.keypad.KeypadViewModel
 import hu.gyerekbillentyuzet.feature.keypad.Typed
 import hu.gyerekbillentyuzet.feature.lock.ChildLockController
 import kotlinx.coroutines.delay
-import kotlinx.coroutines.launch
 import kotlinx.coroutines.flow.collectLatest
 import kotlin.math.PI
 import kotlin.math.cos
@@ -782,7 +781,14 @@ private fun FunToolbar(modifier: Modifier, fontSp: Float, onKey: (KeySpec) -> Un
 private fun KidKey(label: String, color: Color, fontSp: Float, modifier: Modifier, funShape: Boolean = false, onDown: () -> Unit) {
     var pressed by remember { mutableStateOf(false) }
     var ripple by remember { mutableStateOf(false) }
+    var rippleSequence by remember { mutableStateOf(0) }
     val rippleProgress = remember { Animatable(1f) }
+    LaunchedEffect(rippleSequence) {
+        if (rippleSequence > 0) {
+            rippleProgress.snapTo(0f)
+            rippleProgress.animateTo(1f, tween(460, easing = FastOutSlowInEasing))
+        }
+    }
     // Puha, rugalmas "lenyomódás": túllendül, majd visszarugózik
     val squish by animateFloatAsState(
         if (pressed) 1f else 0f,
@@ -798,8 +804,7 @@ private fun KidKey(label: String, color: Color, fontSp: Float, modifier: Modifie
                 detectTapGestures(onPress = {
                     pressed = true
                     ripple = true
-                    rippleProgress.snapTo(0f)
-                    launch { rippleProgress.animateTo(1f, tween(460, easing = FastOutSlowInEasing)) }
+                    rippleSequence += 1
                     onDown()
                     tryAwaitRelease()
                     pressed = false
