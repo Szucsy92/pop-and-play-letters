@@ -1,0 +1,171 @@
+name: Natív build – Android APK és iOS IPA
+
+# A native/android (Kotlin + Compose) és a native/ios (SwiftUI) forrásokból épít.
+# A Capacitor-os app-build.yml változatlan marad.
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - "native/**"
+      - ".github/workflows/native-build.yml"
+  pull_request:
+    paths:
+      - "native/**"
+      - ".github/workflows/native-build.yml"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: native-build-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  stamp:
+    runs-on: ubuntu-latest
+    outputs:
+      stamp: ${{ steps.s.outputs.stamp }}
+      version: ${{ steps.s.outputs.version }}
+      code: ${{ steps.s.outputs.code }}
+    steps:
+      - id: s
+        run: |
+          echo "stamp=$(TZ=Europe/Budapest date +%Y-%m-%d_%H%M)" >> "$GITHUB_OUTPUT"
+          echo "version=$(TZ=Europe/Budapest date +%Y.%m.%d-%H%M)" >> "$GITHUB_OUTPUT"
+          echo "code=${{ github.run_number }}" >> "$GITHUB_OUTPUT"
+
+  android:
+    needs: stamp
+    runs-on: ubuntu-latest
+    env:
+      APP_VERSION_NAME: ${{ needs.stamp.outputs.version }}
+      APP_VERSION_CODE: ${{ needs.stamp.outputs.code }}
+      BUILD_STAMP: ${{ needs.stamp.outputs.stamp }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Forráshiba-ellenőrzés (literális \n a kódban)
+        run: |
+          if grep -rnF '\n' --include=*.kt --include=*.swift native | grep -vE '"[^"]*\\n[^"]*"'; then
+            echo "::error::Literális \\n szekvencia a forrásban (sortörés helyett)."; exit 1
+          fi
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 21
+
+      # Nincs gradlew a repóban, ezért a Gradle-t az action telepíti (AGP 8.9.2 ≥ Gradle 8.11.1).
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: "8.13"
+
+      - name: Aláírókulcs előkészítése (ha van)
+        id: ks
+        env:
+          KS_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+          KS_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+        run: |
+          set -euo pipefail
+          if [ -n "$KS_BASE64" ] && [ -n "$KS_PASSWORD" ]; then
+            KS_FILE="$RUNNER_TEMP/playful-keypad.keystore"
+            printf '%s' "$KS_BASE64" | base64 -d > "$KS_FILE"
+            chmod 600 "$KS_FILE"
+            echo "ANDROID_KEYSTORE_FILE=$KS_FILE" >> "$GITHUB_ENV"
+            echo "signed=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "::notice::Nincs ANDROID_KEYSTORE_* titok (vagy külső PR) – debug APK készül."
+            echo "signed=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Release APK (aláírt)
+        if: steps.ks.outputs.signed == 'true'
+        env:
+          ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+        run: |
+          set -euo pipefail
+          gradle -p native/android assembleRelease --no-daemon --stacktrace
+          mkdir -p out
+          cp native/android/app/build/outputs/apk/release/app-release.apk "out/gyerek-billentyuzet-native-${BUILD_STAMP}.apk"
+          APKSIGNER=$(printf '%s\n' "$ANDROID_HOME"/build-tools/*/apksigner | sort -V | tail -n1)
+          "$APKSIGNER" verify --verbose out/*.apk
+
+      - name: Debug APK (aláíratlan kulccsal nem rendelkező futás)
+        if: steps.ks.outputs.signed != 'true'
+        run: |
+          set -euo pipefail
+          gradle -p native/android assembleDebug --no-daemon --stacktrace
+          mkdir -p out
+          cp native/android/app/build/outputs/apk/debug/app-debug.apk "out/gyerek-billentyuzet-native-${BUILD_STAMP}-debug.apk"
+
+      - name: Kulcs törlése a futtatóról
+        if: always()
+        run: rm -f "$RUNNER_TEMP/playful-keypad.keystore"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: native-android-apk
+          path: out/*.apk
+          if-no-files-found: error
+
+  ios:
+    needs: stamp
+    runs-on: macos-15
+    env:
+      APP_VERSION_NAME: ${{ needs.stamp.outputs.version }}
+      APP_VERSION_CODE: ${{ needs.stamp.outputs.code }}
+      BUILD_STAMP: ${{ needs.stamp.outputs.stamp }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Xcode verzió
+        run: xcodebuild -version
+
+      - name: Aláíratlan IPA készítése
+        working-directory: native/ios
+        run: |
+          set -euo pipefail
+          # Apple marketing version: csak számok (pl. 2026.11.9)
+          MARKETING=$(echo "$APP_VERSION_NAME" | cut -c1-10 | awk -F. '{printf "%d.%d.%d", $1, $2, $3}')
+          SYMROOT="$RUNNER_TEMP/ios-build"
+          xcodebuild -project PlayfulKeypad.xcodeproj -target PlayfulKeypad \
+            -configuration Release -sdk iphoneos \
+            SYMROOT="$SYMROOT" \
+            MARKETING_VERSION="$MARKETING" CURRENT_PROJECT_VERSION="$APP_VERSION_CODE" \
+            CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO CODE_SIGN_IDENTITY="" \
+            build > "$RUNNER_TEMP/xcode.log" 2>&1 || { tail -n 120 "$RUNNER_TEMP/xcode.log"; exit 1; }
+          APP="$SYMROOT/Release-iphoneos/PlayfulKeypad.app"
+          test -d "$APP"
+          mkdir -p "$RUNNER_TEMP/ipa/Payload" "$GITHUB_WORKSPACE/out"
+          cp -R "$APP" "$RUNNER_TEMP/ipa/Payload/"
+          (cd "$RUNNER_TEMP/ipa" && zip -qry "$GITHUB_WORKSPACE/out/gyerek-billentyuzet-native-${BUILD_STAMP}.ipa" Payload)
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: native-ios-ipa
+          path: out/*.ipa
+          if-no-files-found: error
+
+  release:
+    # Csak kézi indításnál vagy main-re pusholáskor, és csak ha az Android sikeres.
+    if: ${{ always() && needs.android.result == 'success' && github.event_name != 'pull_request' }}
+    needs: [stamp, android, ios]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: out
+          merge-multiple: true
+      - uses: softprops/action-gh-release@v2
+        with:
+          tag_name: native-${{ needs.stamp.outputs.stamp }}-${{ needs.stamp.outputs.code }}
+          name: Natív build ${{ needs.stamp.outputs.version }}
+          prerelease: true
+          body: |
+            Natív (Kotlin/SwiftUI) build · ${{ needs.stamp.outputs.version }} (#${{ needs.stamp.outputs.code }})
+            Android: APK (kulcs esetén aláírt, különben debug). iOS: aláíratlan IPA – AltStore/Sideloadly-val aláírandó.
+          files: out/*
