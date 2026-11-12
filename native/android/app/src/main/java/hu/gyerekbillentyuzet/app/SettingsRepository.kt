@@ -15,9 +15,8 @@ class SettingsRepository(private val context: Context) {
     private val historyKey = stringPreferencesKey("typed_history")
     val sound = context.dataStore.data.map { it[soundKey] ?: true }
 
-    /** A már begépelt (megtartott) szöveg. */
-    val history = context.dataStore.data.map { it[historyKey] ?: "" }
-    suspend fun setHistory(value: String) { context.dataStore.edit { it[historyKey] = value } }
+    /** A begépelt szöveget már nem őrizzük meg: a régi verzióból maradt mentést is töröljük. */
+    suspend fun clearLegacyHistory() { context.dataStore.edit { it.remove(historyKey) } }
 
     /** null = még nem választott billentyűzet-módot (a webes változathoz hasonlóan ilyenkor a választó látszik). */
     val mode = context.dataStore.data.map { it[modeKey] }

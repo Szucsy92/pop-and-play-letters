@@ -11,7 +11,6 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.combine
-import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 
@@ -45,8 +44,7 @@ class KeypadViewModel(app: Application) : AndroidViewModel(app) {
 
     init {
         viewModelScope.launch {
-            val saved = settings.history.first()
-            _state.update { it.copy(history = saved) }
+            settings.clearLegacyHistory() // nem emlékezünk: a szöveg csak a memóriában él
             settings.mode.combine(settings.sound) { mode, snd -> mode to snd }
                 .collect { (mode, snd) -> _state.update { it.copy(loaded = true, mode = mode, soundEnabled = snd) } }
         }
@@ -55,7 +53,7 @@ class KeypadViewModel(app: Application) : AndroidViewModel(app) {
     /** A sor tele (5) -> a szövegbe repül. Ez a tiszta állapotátmenet. */
     private fun doFlush(s: KeypadUiState): KeypadUiState {
         if (s.pending.isEmpty()) return s
-        val hist = (s.history + s.pending.joinToString("") { it.ch }).takeLast(MAX_HISTORY)
+        val hist = trimHistory(s.history + s.pending.joinToString("") { it.ch })
         uid += 1
         val burst = Burst(uid, 2, 0, 0, s.pending.first().colorIdx)
         return s.copy(
@@ -68,14 +66,16 @@ class KeypadViewModel(app: Application) : AndroidViewModel(app) {
         )
     }
 
-    private fun persist() {
-        val h = _state.value.history
-        viewModelScope.launch { settings.setHistory(h) }
+    private fun trimHistory(h: String): String {
+        if (h.length <= MAX_HISTORY) return h
+        val cut = h.takeLast(MAX_HISTORY)
+        return if (cut.isNotEmpty() && Character.isLowSurrogate(cut.first())) cut.drop(1) else cut
     }
 
     fun press(ch: String) {
-        if (ch.isEmpty() || ch == " ") return
-        val seed = ch.first().code
+        if (ch.isEmpty()) return
+        if (ch == " ") { pressSpace(); return }
+        val seed = ch.codePointAt(0)
         var flushed = false
         _state.update { s ->
             var cur = s
@@ -94,10 +94,9 @@ class KeypadViewModel(app: Application) : AndroidViewModel(app) {
             sound.play(seed)
             if (flushed) sound.chime()
         }
-        if (flushed) persist()
-        // Ha a sor megtelt, hamar a szövegbe repül; ha a gyerek megáll, később akkor is.
+        // Ha a sor megtelt (5), hamar a szövegbe repül; ha a gyerek 1, 2, 3 vagy 4 karakternél megáll, az is gyorsan követi.
         flushJob?.cancel()
-        val wait = if (_state.value.pending.size >= ROW) 900L else 3200L
+        val wait = if (_state.value.pending.size >= ROW) FULL_FLUSH_MS else IDLE_FLUSH_MS
         flushJob = viewModelScope.launch {
             delay(wait)
             flushNow()
@@ -108,14 +107,35 @@ class KeypadViewModel(app: Application) : AndroidViewModel(app) {
         if (_state.value.pending.isEmpty()) return
         _state.update { doFlush(it) }
         if (_state.value.soundEnabled) sound.chime()
-        persist()
     }
 
-    fun clearText() {
+    /** Azonnali "elküldés" (rakéta gomb): a soron lévő karakterek rögtön a szövegbe repülnek. */
+    fun sendNow() {
         flushJob?.cancel()
-        _state.update { it.copy(history = "", pending = emptyList(), flying = emptyList()) }
-        persist()
+        flushNow()
     }
+
+    /** Szóköz: a sor beviszi magát, majd a szövegbe kerül egy szóköz is (nincs dupla / kezdő szóköz). */
+    fun pressSpace() {
+        flushJob?.cancel()
+        var hadPending = false
+        _state.update { s ->
+            hadPending = s.pending.isNotEmpty()
+            val cur = if (hadPending) doFlush(s) else s
+            val h = cur.history
+            val next = if (h.isEmpty() || h.last() == ' ') h else trimHistory("$h ")
+            cur.copy(history = next, bump = cur.bump + 1)
+        }
+        if (_state.value.soundEnabled) { if (hadPending) sound.chime() else sound.play(3) }
+    }
+
+    /** A puffer törlése: nem marad semmi a memóriában sem (kilépéskor és a háttérbe kerüléskor). */
+    fun wipe() {
+        flushJob?.cancel()
+        _state.update { it.copy(history = "", pending = emptyList(), flying = emptyList(), bursts = emptyList()) }
+    }
+
+    fun clearText() = wipe()
 
     fun choose(mode: String) {
         viewModelScope.launch { settings.setMode(mode) }
@@ -131,7 +151,7 @@ class KeypadViewModel(app: Application) : AndroidViewModel(app) {
 
     fun showMenu() { _state.update { it.copy(parentMenu = true) } }
     fun closeMenu() { _state.update { it.copy(parentMenu = false) } }
-    fun exit() { _state.update { it.copy(parentMenu = false, exited = true) } }
+    fun exit() { wipe(); _state.update { it.copy(parentMenu = false, exited = true) } }
     fun restart() { _state.update { it.copy(exited = false) } }
 
     override fun onCleared() {
@@ -141,6 +161,8 @@ class KeypadViewModel(app: Application) : AndroidViewModel(app) {
 
     private companion object {
         const val ROW = 5
-        const val MAX_HISTORY = 200
+        const val MAX_HISTORY = 4000 // görgethető, de a memóriában marad
+        const val IDLE_FLUSH_MS = 800L // 1-4 karakternél megállva ennyi után bekerül
+        const val FULL_FLUSH_MS = 600L // az 5. karakter után ennyivel
     }
 }
