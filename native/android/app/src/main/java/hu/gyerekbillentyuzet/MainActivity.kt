@@ -61,6 +61,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.drawBehind
+import androidx.compose.ui.draw.drawWithContent
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.geometry.CornerRadius
@@ -68,10 +69,14 @@ import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.CompositingStrategy
+import androidx.compose.ui.graphics.StrokeJoin
+import androidx.compose.ui.graphics.lerp
 import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.Shadow
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.drawscope.DrawScope
+import androidx.compose.ui.graphics.drawscope.Fill
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.drawscope.rotate
 import androidx.compose.ui.graphics.drawscope.scale
@@ -139,7 +144,7 @@ private data class KeySpec(val label: String, val weight: Float = 1f, val kind: 
 private fun letters(s: String) = s.map { KeySpec(it.toString()) }
 private fun funKey(label: String, weight: Float = 1f, kind: Int = K_TYPE) = KeySpec(label, weight, kind, true)
 
-// Felső "kezelősáv": kerek, hintázó emoji gombok (beírják magukat)
+// Felső "kezelősáv": kerek emoji gombok (beírják magukat)
 private val FunTop = listOf("🦄", "🐸", "🌈", "🍭", "👻", "🐙").map { funKey(it) }
 
 // QWERTY (mint a képen). Ha QWERTZ kell: "QWERTYUIOP" -> "QWERTZUIOP" és "ZXCVBNM" -> "YXCVBNM".
@@ -457,45 +462,103 @@ private fun HistoryPanel(history: String, bump: Long, modifier: Modifier) {
     }
 }
 
+private val SparkleColor = Color(0xFFFFF6C8)
+
+/** Négyágú "tündérpor" csillag a nullpont körül. */
+private fun sparklePath(r: Float): Path {
+    val path = Path()
+    val pts = listOf(0f to -1f, 0.22f to -0.22f, 1f to 0f, 0.22f to 0.22f, 0f to 1f, -0.22f to 0.22f, -1f to 0f, -0.22f to -0.22f)
+    pts.forEachIndexed { i, (px, py) -> if (i == 0) path.moveTo(px * r, py * r) else path.lineTo(px * r, py * r) }
+    path.close()
+    return path
+}
+
+/** Három pislákoló csillag a betű szélén (nem kör, nem négyzet: apró varázsszikrák). */
+private fun DrawScope.drawSparkles(t: Float, seed: Int) {
+    val cellPx = size.minDimension
+    val spots = listOf(Offset(0.06f, 0.20f), Offset(0.95f, 0.32f), Offset(0.82f, 0.95f))
+    spots.forEachIndexed { i, o ->
+        val ph = (t * 2f + i * 0.34f + seed * 0.13f) % 1f
+        val k = sin(ph * PI.toFloat()).coerceAtLeast(0f)
+        if (k <= 0.02f) return@forEachIndexed
+        val r = cellPx * (0.03f + 0.085f * k)
+        translate(o.x * cellPx, o.y * cellPx) {
+            rotate(ph * 90f, Offset.Zero) {
+                drawPath(sparklePath(r), SparkleColor.copy(alpha = (0.3f + 0.7f * k).coerceIn(0f, 1f)))
+            }
+        }
+    }
+}
+
+/**
+ * Meseszerű betű: a fény a betű saját körvonalát követi (árnyék-alapú glow, nincs négyzet/kör panel),
+ * a betű mesekönyv-stílusú: sötétebb körvonal, felül világos, alul telt színátmenet, szélén pislákoló csillagok.
+ * Rétegek alulról: glow -> körvonal -> kitöltés. Az emoji / szimbólum egyszerűbb: glow + éles karakter.
+ */
 @Composable
-private fun BigChar(ch: String, colorIdx: Int, cell: Float, glow: State<Float>? = null) {
-    val glowPx = with(LocalDensity.current) { (cell * 0.22f).dp.toPx() }
+private fun BigChar(
+    ch: String, colorIdx: Int, cell: Float,
+    glow: State<Float>? = null, twinkle: State<Float>? = null,
+) {
     val c = KidColors[colorIdx]
+    val density = LocalDensity.current
+    val glowPx = with(density) { (cell * 0.30f).dp.toPx() }
+    val outlinePx = with(density) { (cell * 0.065f).dp.toPx() }
+    val story = ch.isNotEmpty() && ch.all { it.isLetterOrDigit() }
+    val fs = (cell * 0.9f).sp
+    val light = lerp(c, Color.White, 0.50f)
+    val deep = lerp(c, Color.Black, 0.38f)
+    val fillBrush = Brush.verticalGradient(listOf(light, c, lerp(c, deep, 0.45f)))
+
     Box(
         Modifier
             .size(cell.dp)
-            .drawBehind {
-                // lágy, színes fényudvar a betű mögött (az újonnan érkezett erősebb, aztán csillapodik)
-                val g = glow?.value ?: 0.4f
-                val glowShape = size.minDimension * 0.78f
-                val glowBrush = Brush.radialGradient(
-                    0f to c.copy(alpha = 0.42f * g),
-                    0.58f to c.copy(alpha = 0.16f * g),
-                    1f to Color.Transparent,
-                    center = center,
-                    radius = glowShape,
-                )
-                // A fény a karakter lekerekített, kompakt formáját követi, nem négyzetes panelt rajzol.
-                drawRoundRect(
-                    brush = glowBrush,
-                    topLeft = Offset(size.width * 0.12f, size.height * 0.12f),
-                    size = Size(size.width * 0.76f, size.height * 0.76f),
-                    cornerRadius = CornerRadius(size.minDimension * 0.34f),
-                )
+            .drawWithContent {
+                drawContent()
+                if (story && twinkle != null) drawSparkles(twinkle.value, colorIdx)
             },
         contentAlignment = Alignment.Center,
     ) {
+        // 1) Glow: a betű alakját követő, elmosott árnyék. Az erősség (új betűnél nagyobb) a rétegen animálódik.
         Text(
             ch,
+            modifier = Modifier.graphicsLayer {
+                alpha = (0.35f + 0.6f * (glow?.value ?: 0.4f)).coerceIn(0f, 1f)
+                compositingStrategy = CompositingStrategy.ModulateAlpha // nincs levágó puffer -> nincs négyzetes él
+            },
             style = TextStyle(
-                color = c,
-                fontSize = (cell * 0.9f).sp,
-                lineHeight = (cell * 0.9f).sp,
-                fontWeight = FontWeight.Bold,
-                fontFamily = KidFont,
-                shadow = Shadow(c.copy(alpha = 0.85f), Offset.Zero, glowPx),
+                color = c, fontSize = fs, lineHeight = fs,
+                fontWeight = FontWeight.Bold, fontFamily = KidFont,
+                shadow = Shadow(c, Offset.Zero, glowPx),
             ),
         )
+        if (story) {
+            // 2) Sötét mesekönyv-körvonal
+            Text(
+                ch,
+                style = TextStyle(
+                    color = deep, fontSize = fs, lineHeight = fs,
+                    fontWeight = FontWeight.Bold, fontFamily = KidFont,
+                    drawStyle = Stroke(width = outlinePx * 2f, cap = StrokeCap.Round, join = StrokeJoin.Round),
+                ),
+            )
+            // 3) Színátmenetes kitöltés
+            Text(
+                ch,
+                style = TextStyle(
+                    brush = fillBrush, fontSize = fs, lineHeight = fs,
+                    fontWeight = FontWeight.Bold, fontFamily = KidFont,
+                ),
+            )
+        } else {
+            Text(
+                ch,
+                style = TextStyle(
+                    color = c, fontSize = fs, lineHeight = fs,
+                    fontWeight = FontWeight.Bold, fontFamily = KidFont,
+                ),
+            )
+        }
     }
 }
 
@@ -521,9 +584,10 @@ private fun TypedChar(t: Typed, slot: Int, total: Int, sw: Float, cell: Float, c
                 rotationZ = (1f - v) * 34f * dir + sin(ph) * 2f
                 translationY = (1f - v) * (-0.75f * cell.dp.toPx()) + sin(ph) * 4.dp.toPx()
                 alpha = min(1f, v * 3f).coerceAtLeast(0f)
+                compositingStrategy = CompositingStrategy.ModulateAlpha // a glow ne vágódjon négyzetre
             },
         contentAlignment = Alignment.Center,
-    ) { BigChar(t.ch, t.colorIdx, cell, glow.asState()) }
+    ) { BigChar(t.ch, t.colorIdx, cell, glow.asState(), bob) }
 }
 
 /** Az 5 betű hullámszerűen felrepül a begépelt szövegbe (kis "lendület-vétellel"), közben kicsinyedve elhalványul. */
@@ -548,6 +612,7 @@ private fun FlyingRow(items: List<Typed>, sw: Float, cell: Float, cy: Float) {
                     scaleY = sc
                     rotationZ = e * (i - 2) * 18f
                     alpha = if (local > 0.7f) 1f - (local - 0.7f) / 0.3f else 1f
+                    compositingStrategy = CompositingStrategy.ModulateAlpha
                 },
             contentAlignment = Alignment.Center,
         ) { BigChar(t.ch, t.colorIdx, cell) }
@@ -591,18 +656,6 @@ private fun BurstView(b: Burst, sw: Float, cell: Float, cy: Float) {
         val s = p.value * 2f // eltelt másodperc
         val ox = (if (b.kind == 2) sw / 2f else (sw - b.total * cell) / 2f + (b.slot + 0.5f) * cell).dp.toPx()
         val oy = cy.dp.toPx()
-        if (b.kind < 2) {
-            val rp = (s / 0.45f).coerceIn(0f, 1f)
-            if (rp < 1f) {
-                val c = Offset(ox, oy)
-                val gr = (50f + 110f * rp).dp.toPx()
-                drawCircle( // lágy fényvillanás
-                    Brush.radialGradient(listOf(KidColors[b.seed % KidColors.size].copy(alpha = 0.5f * (1f - rp)), Color.Transparent), c, gr),
-                    gr, c,
-                )
-                drawCircle(Color.White.copy(alpha = 0.5f * (1f - rp)), (20f + 80f * rp).dp.toPx(), c, style = Stroke(3.dp.toPx()))
-            }
-        }
         for (q in parts) drawParticle(q, s, ox, oy)
     }
 }
@@ -624,29 +677,34 @@ private fun DrawScope.drawParticle(q: Particle, s: Float, ox: Float, oy: Float) 
         rotate(q.spin * s, Offset.Zero) {
             scale(sc, Offset.Zero) {
                 val aa = a.coerceIn(0f, 1f)
-                val gr = q.size.dp.toPx() * 2.4f
-                drawCircle(Brush.radialGradient(listOf(q.color.copy(alpha = 0.45f * aa), Color.Transparent), Offset.Zero, gr), gr, Offset.Zero) // glow
+                val u = q.size.dp.toPx()
+                // glow: ugyanaz az alak egyre vastagabb, halványabb körvonallal -> a forma szélét követi (nem kör)
+                drawShape(q, aa * 0.10f, u * 1.4f)
+                drawShape(q, aa * 0.17f, u * 0.8f)
+                drawShape(q, aa * 0.28f, u * 0.38f)
                 drawShape(q, aa)
             }
         }
     }
 }
 
-private fun DrawScope.drawShape(q: Particle, a: Float) {
+private fun DrawScope.drawShape(q: Particle, a: Float, grow: Float = 0f) {
     val s = q.size.dp.toPx()
+    // grow > 0: csak a körvonal vastagított változata (glow-réteg); 0: tömör alak
+    val fs = if (grow > 0f) Stroke(grow, cap = StrokeCap.Round, join = StrokeJoin.Round) else Fill
     when (q.kind) {
-        0 -> drawRoundRect(q.color, Offset(-s * 0.5f, -s * 0.75f), Size(s, s * 1.5f), CornerRadius(s * 0.2f), alpha = a)
-        1 -> drawCircle(q.color, s * 0.55f, Offset.Zero, alpha = a)
-        2 -> drawPath(polyPath(10) { i -> if (i % 2 == 0) s else s * 0.45f }, q.color, alpha = a) // csillag
+        0 -> drawRoundRect(q.color, Offset(-s * 0.5f, -s * 0.75f), Size(s, s * 1.5f), CornerRadius(s * 0.2f), alpha = a, style = fs)
+        1 -> drawCircle(q.color, s * 0.55f, Offset.Zero, alpha = a, style = fs)
+        2 -> drawPath(polyPath(10) { i -> if (i % 2 == 0) s else s * 0.45f }, q.color, alpha = a, style = fs) // csillag
         3 -> { // szív
             val path = Path()
             path.moveTo(0f, s * 0.9f)
             path.cubicTo(-s * 1.4f, -s * 0.1f, -s * 0.7f, -s * 1.1f, 0f, -s * 0.4f)
             path.cubicTo(s * 0.7f, -s * 1.1f, s * 1.4f, -s * 0.1f, 0f, s * 0.9f)
             path.close()
-            drawPath(path, q.color, alpha = a)
+            drawPath(path, q.color, alpha = a, style = fs)
         }
-        4 -> drawArc(q.color, 135f, 180f, false, Offset(-s, -s), Size(s * 2f, s * 2f), alpha = a, style = Stroke(s * 0.3f, cap = StrokeCap.Round))
+        4 -> drawArc(q.color, 135f, 180f, false, Offset(-s, -s), Size(s * 2f, s * 2f), alpha = a, style = Stroke(s * 0.3f + grow, cap = StrokeCap.Round))
         5 -> { // kunkori vonal
             val w = s * 0.55f
             val path = Path()
@@ -655,20 +713,12 @@ private fun DrawScope.drawShape(q: Particle, a: Float) {
             path.quadraticBezierTo(-w * 0.5f, w, 0f, 0f)
             path.quadraticBezierTo(w * 0.5f, -w, w, 0f)
             path.quadraticBezierTo(w * 1.5f, w, w * 2f, 0f)
-            drawPath(path, q.color, alpha = a, style = Stroke(s * 0.3f, cap = StrokeCap.Round))
+            drawPath(path, q.color, alpha = a, style = Stroke(s * 0.3f + grow, cap = StrokeCap.Round))
         }
-        6 -> drawCircle(q.color, s * 0.6f, Offset.Zero, alpha = a, style = Stroke(s * 0.28f)) // gyűrű
-        7 -> drawPath(polyPath(4) { s * 0.9f }, q.color, alpha = a) // rombusz
-        8 -> drawPath(polyPath(3) { s * 0.95f }, q.color, alpha = a) // háromszög
-        else -> { // négyágú szikra
-            val path = Path()
-            val pts = listOf(0f to -1f, 0.25f to -0.25f, 1f to 0f, 0.25f to 0.25f, 0f to 1f, -0.25f to 0.25f, -1f to 0f, -0.25f to -0.25f)
-            pts.forEachIndexed { i, (px, py) ->
-                if (i == 0) path.moveTo(px * s, py * s) else path.lineTo(px * s, py * s)
-            }
-            path.close()
-            drawPath(path, q.color, alpha = a)
-        }
+        6 -> drawCircle(q.color, s * 0.6f, Offset.Zero, alpha = a, style = Stroke(s * 0.28f + grow)) // gyűrű
+        7 -> drawPath(polyPath(4) { s * 0.9f }, q.color, alpha = a, style = fs) // rombusz
+        8 -> drawPath(polyPath(3) { s * 0.95f }, q.color, alpha = a, style = fs) // háromszög
+        else -> drawPath(sparklePath(s), q.color, alpha = a, style = fs) // négyágú szikra
     }
 }
 
@@ -751,12 +801,9 @@ private fun FunKeyboard(fontSp: Float, modifier: Modifier, onKey: (KeySpec) -> U
     }
 }
 
-/** A felső sáv: kerek emoji gombok, amik finoman hintáznak. */
+/** A felső sáv: kerek emoji gombok. Nyugodtan állnak, csak lenyomáskor mozdulnak (KidKey rugós lenyomása). */
 @Composable
 private fun FunToolbar(modifier: Modifier, fontSp: Float, onKey: (KeySpec) -> Unit) {
-    val t by rememberInfiniteTransition(label = "toolbar").animateFloat(
-        0f, 1f, infiniteRepeatable(tween(2800, easing = LinearEasing)), label = "toolbarT",
-    )
     Row(modifier, horizontalArrangement = Arrangement.SpaceEvenly, verticalAlignment = Alignment.CenterVertically) {
         FunTop.forEachIndexed { i, k ->
             KidKey(
@@ -766,12 +813,7 @@ private fun FunToolbar(modifier: Modifier, fontSp: Float, onKey: (KeySpec) -> Un
                 funShape = true,
                 modifier = Modifier
                     .fillMaxHeight()
-                    .aspectRatio(1f)
-                    .graphicsLayer {
-                        val ph = (t + i * 0.17f) * 2f * PI.toFloat()
-                        rotationZ = sin(ph) * 7f
-                        translationY = cos(ph) * 2.dp.toPx()
-                    },
+                    .aspectRatio(1f),
             ) { onKey(k) }
         }
     }
