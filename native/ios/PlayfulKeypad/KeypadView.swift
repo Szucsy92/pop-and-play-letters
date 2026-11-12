@@ -34,7 +34,7 @@ private func kidFont(_ size: CGFloat) -> Font {
     .system(size: size, weight: .bold, design: .rounded)
 }
 
-// ---- Animációs segédek (CSS keyframes portja) ----
+// ---- Animációs segédek ----
 private struct CubicBezier {
     let x1: Double, y1: Double, x2: Double, y2: Double
 
@@ -54,55 +54,7 @@ private struct CubicBezier {
     }
 }
 
-private let kidEase = CubicBezier(x1: 0.2, y1: 0.9, x2: 0.3, y2: 1.2)
-private let flyEase = CubicBezier(x1: 0, y1: 0, x2: 0.58, y2: 1)
-
-private func track(_ t: Double, _ stops: [(Double, Double)]) -> Double {
-    guard let first = stops.first, let last = stops.last else { return 0 }
-    if t <= first.0 { return first.1 }
-    for i in 1..<stops.count {
-        let (t1, v1) = stops[i]
-        if t <= t1 {
-            let (t0, v0) = stops[i - 1]
-            let local = (t - t0) / (t1 - t0)
-            return v0 + (v1 - v0) * kidEase.value(local)
-        }
-    }
-    return last.1
-}
-
-private struct CharFrame {
-    var scale = 1.0
-    var scaleY = 1.0
-    var rot = 0.0
-    var ty = 0.0
-    var alpha = 1.0
-}
-
-private func charFrame(anim: Int, t: Double, size: Double, screenH: Double) -> CharFrame {
-    var f = CharFrame()
-    switch anim {
-    case 0:
-        f.scale = track(t, [(0, 0), (0.2, 1.15), (0.35, 1), (1, 0.6)])
-        f.alpha = track(t, [(0, 0), (0.2, 1), (0.75, 1), (1, 0)])
-    case 1:
-        f.scale = track(t, [(0, 0), (0.2, 1), (0.75, 1), (1, 0.7)])
-        f.rot = track(t, [(0, 0), (0.2, -10), (0.35, 8), (0.5, -4), (0.75, 0), (1, 0)])
-        f.alpha = track(t, [(0, 1), (0.75, 1), (1, 0)])
-    case 2:
-        let fall = track(t, [(0, -0.6 * screenH), (0.25, 0)])
-        let bounce = track(t, [(0.25, 0), (0.35, -0.08), (0.45, 0), (1, 0.10)]) * size
-        f.ty = fall + bounce
-        f.scaleY = track(t, [(0, 1), (0.25, 0.85), (0.35, 1), (1, 1)])
-        f.alpha = track(t, [(0, 1), (0.75, 1), (1, 0)])
-    default:
-        f.rot = track(t, [(0, -200), (0.3, 0), (1, 0)])
-        f.scale = track(t, [(0, 0), (0.3, 1), (1, 1.3)])
-        f.alpha = track(t, [(0, 1), (0.75, 1), (1, 0)])
-    }
-    f.alpha = min(1, max(0, f.alpha))
-    return f
-}
+private let launchEase = CubicBezier(x1: 0.5, y1: -0.4, x2: 0.8, y2: 0.6)
 
 // ---- Fő nézet ----
 struct KeypadView: View {
@@ -156,15 +108,10 @@ struct KeypadView: View {
     private func gameView(w: CGFloat, h: CGFloat) -> some View {
         let inner = vm.mode == "inner"
         ZStack {
-            // színpad
-            ZStack {
-                if let shown = vm.shown {
-                    BitsView(bits: vm.bits, start: shown.start, token: shown.id)
-                    StageChar(shown: shown, size: min(w * 0.55, h * 0.38), screenH: h)
-                }
-            }
-            .frame(width: w, height: inner ? h * 0.54 : h)
-            .frame(width: w, height: h, alignment: .top)
+            // színpad: begépelt szöveg, felsorakozó karakterek, konfetti
+            StageView(vm: vm, w: w, h: inner ? h * 0.54 : h)
+                .frame(width: w, height: inner ? h * 0.54 : h)
+                .frame(width: w, height: h, alignment: .top)
 
             // telefon billentyűzete
             if vm.mode == "native" && !vm.parentMenu {
@@ -259,6 +206,9 @@ struct KeypadView: View {
                       bg: Kid.secondary, fg: Kid.foreground, width: btnW) { vm.toggleMode() }
             KidButton(text: "Hang: \(vm.soundEnabled ? "be 🔊" : "ki 🔇")",
                       bg: Kid.secondary, fg: Kid.foreground, width: btnW) { vm.soundEnabled.toggle() }
+            KidButton(text: "Begépelt szöveg törlése 🗑", bg: Kid.secondary, fg: Kid.foreground, width: btnW) {
+                vm.clearText()
+            }
             KidButton(text: "Vissza a játékhoz", bg: Kid.primary, fg: Kid.background, width: btnW) {
                 vm.parentMenu = false
             }
@@ -337,7 +287,7 @@ private struct KidKey: View {
                 .fill(color)
                 .overlay(Text(label).font(kidFont(size)).foregroundStyle(Kid.background))
                 .offset(y: pressed ? 3 : 0)
-                .scaleEffect(pressed ? 0.96 : 1)
+                .scaleEffect(pressed ? 0.94 : 1)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .contentShape(Rectangle())
@@ -345,75 +295,290 @@ private struct KidKey: View {
             pressed = down
             if down { onDown() }
         }, perform: {})
-        .animation(.easeOut(duration: 0.08), value: pressed)
+        // Rugalmas "lenyomódás": túllendül, majd visszarugózik
+        .animation(.spring(response: 0.25, dampingFraction: 0.45), value: pressed)
     }
 }
 
-private struct StageChar: View {
-    let shown: KidShown
-    let size: CGFloat
-    let screenH: CGFloat
+// ---- Színpad ----
+private struct StageView: View {
+    let vm: KeypadViewModel
+    let w: CGFloat
+    let h: CGFloat
+
+    var body: some View {
+        let cell = min(w * 0.19, h * 0.34)
+        let cy = h * 0.60
+        ZStack {
+            HistoryPanel(history: vm.history, bump: vm.bump)
+                .frame(width: w)
+                .padding(.top, 64)
+                .padding(.horizontal, 20)
+                .frame(width: w, height: h, alignment: .top)
+
+            if !vm.flying.isEmpty {
+                FlyingRow(items: vm.flying, start: vm.flyStart, flyId: vm.flyId, w: w, cell: cell, cy: cy)
+                    .id(vm.flyId)
+            }
+
+            ForEach(Array(vm.pending.enumerated()), id: \.element.id) { i, t in
+                TypedChar(item: t, slot: i, total: vm.pending.count, w: w, cell: cell, cy: cy)
+            }
+
+            ForEach(vm.bursts) { b in
+                BurstView(burst: b, w: w, h: h, cell: cell, cy: cy)
+            }
+        }
+        .frame(width: w, height: h)
+        .allowsHitTesting(false)
+    }
+}
+
+/// A már begépelt szöveg: minden betű a saját színével, és rugalmasan "megpattan", ha új betűk érkeznek.
+private struct HistoryPanel: View {
+    let history: String
+    let bump: Int
+    @State private var scale: CGFloat = 1
+
+    var body: some View {
+        if history.isEmpty {
+            EmptyView()
+        } else {
+            let colored = history.suffix(48).reduce(Text("")) { acc, c in
+                let code = Int(c.unicodeScalars.first?.value ?? 0)
+                return acc + Text(String(c)).foregroundColor(kidColors[code % kidColors.count])
+            }
+            colored
+                .font(kidFont(30))
+                .tracking(2)
+                .lineSpacing(4)
+                .lineLimit(3)
+                .multilineTextAlignment(.center)
+                .frame(maxWidth: .infinity)
+                .padding(.horizontal, 14)
+                .padding(.vertical, 8)
+                .background(Color.white.opacity(0.07), in: RoundedRectangle(cornerRadius: 16))
+                .scaleEffect(scale)
+                .onChange(of: bump) { _, _ in
+                    scale = 1.12
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.02) {
+                        withAnimation(.spring(response: 0.35, dampingFraction: 0.35)) { scale = 1 }
+                    }
+                }
+        }
+    }
+}
+
+private struct BigChar: View {
+    let ch: String
+    let colorIdx: Int
+    let cell: CGFloat
+
+    var body: some View {
+        Text(ch)
+            .font(kidFont(cell * 0.9))
+            .foregroundStyle(kidColors[colorIdx])
+            .shadow(color: Color.black.opacity(0.35), radius: 0, x: 0, y: cell * 0.05)
+            .lineLimit(1)
+            .fixedSize()
+            .frame(width: cell, height: cell)
+    }
+}
+
+/// Egy felugró karakter: rugós (túllendülő) belépés, utána finom lebegés; a sor többi tagja rugalmasan odébb csúszik.
+private struct TypedChar: View {
+    let item: KidTyped
+    let slot: Int
+    let total: Int
+    let w: CGFloat
+    let cell: CGFloat
+    let cy: CGFloat
+    @State private var shown = false
+    @State private var bobbing = false
+
+    var body: some View {
+        let dir: Double = item.id % 2 == 0 ? -1 : 1
+        let targetX = (w - CGFloat(total) * cell) / 2 + CGFloat(slot) * cell + cell / 2
+        BigChar(ch: item.ch, colorIdx: item.colorIdx, cell: cell)
+            .scaleEffect(x: shown ? 1 : 0, y: shown ? 1 : 0)
+            .rotationEffect(.degrees(shown ? 0 : 28 * dir))
+            .offset(y: shown ? 0 : -cell * 0.5)
+            .offset(y: bobbing ? -4 : 4)
+            .animation(.easeInOut(duration: 1.2).delay(Double(slot) * 0.2).repeatForever(autoreverses: true), value: bobbing)
+            .position(x: targetX, y: cy)
+            .animation(.spring(response: 0.45, dampingFraction: 0.55), value: targetX)
+            .onAppear {
+                withAnimation(.spring(response: 0.5, dampingFraction: 0.34)) { shown = true }
+                bobbing = true
+            }
+    }
+}
+
+/// Az 5 betű hullámszerűen felrepül a begépelt szövegbe (kis "lendület-vétellel"), közben kicsinyedve elhalványul.
+private struct FlyingRow: View {
+    let items: [KidTyped]
+    let start: Date
+    let flyId: Int
+    let w: CGFloat
+    let cell: CGFloat
+    let cy: CGFloat
     @State private var done = false
 
     var body: some View {
         TimelineView(.animation(paused: done)) { ctx in
-            let t = min(1, max(0, ctx.date.timeIntervalSince(shown.start) / 1.6))
-            let f = charFrame(anim: shown.anim, t: t, size: Double(size), screenH: Double(screenH))
-            Text(shown.ch)
-                .font(kidFont(size))
-                .foregroundStyle(kidColors[shown.colorIdx])
-                .shadow(color: Color.black.opacity(0.35), radius: 0, x: 0, y: size * 0.06)
-                .lineLimit(1)
-                .fixedSize()
-                .scaleEffect(x: CGFloat(f.scale), y: CGFloat(f.scale * f.scaleY))
-                .rotationEffect(.degrees(f.rot))
-                .offset(y: CGFloat(f.ty))
-                .opacity(f.alpha)
+            let p = ctx.date.timeIntervalSince(start) * 1000 // ms
+            ZStack {
+                ForEach(Array(items.enumerated()), id: \.element.id) { i, t in
+                    let local = min(1, max(0, (p - Double(i) * 45) / 460))
+                    let e = launchEase.value(local)
+                    let x = (w - CGFloat(items.count) * cell) / 2 + CGFloat(i) * cell + cell / 2
+                    let sc = CGFloat(1 - 0.7 * e)
+                    BigChar(ch: t.ch, colorIdx: t.colorIdx, cell: cell)
+                        .scaleEffect(sc)
+                        .rotationEffect(.degrees(e * Double(i - 2) * 18))
+                        .opacity(local > 0.7 ? 1 - (local - 0.7) / 0.3 : 1)
+                        .position(x: x, y: cy - CGFloat(e) * (cy - 104))
+                }
+            }
         }
-        .task(id: shown.id) {
+        .task(id: flyId) {
             done = false
-            try? await Task.sleep(nanoseconds: 1_700_000_000)
+            try? await Task.sleep(nanoseconds: 750_000_000)
             done = true
         }
     }
 }
 
-private struct BitsView: View {
-    let bits: [KidBit]
-    let start: Date
-    let token: Int
+// ---- Mókás konfetti ----
+private struct Particle {
+    let vx: Double, vy: Double, spin: Double
+    let kind: Int
+    let color: Color
+    let size: Double
+    let phase: Double
+}
+
+private func makeParticles(_ b: KidBurst) -> [Particle] {
+    let n = b.kind == 0 ? 22 : (b.kind == 1 ? 46 : 40)
+    return (0..<n).map { i in
+        let ang = b.kind == 0 ? (-90.0 + (Double.random(in: 0..<1) - 0.5) * 140.0) : Double.random(in: 0..<360)
+        let speed = b.kind == 0 ? 280 + Double.random(in: 0..<420) : 300 + Double.random(in: 0..<500)
+        let rad = ang * Double.pi / 180
+        var vy = sin(rad) * speed
+        if b.kind != 0 { vy -= 220 }
+        let kind: Int
+        switch Int.random(in: 0..<10) {
+        case 0, 1, 2: kind = 0
+        case 3, 4: kind = 1
+        case 5, 6: kind = 2
+        case 7: kind = 3
+        case 8: kind = 4
+        default: kind = 5
+        }
+        return Particle(
+            vx: cos(rad) * speed, vy: vy,
+            spin: (Double.random(in: 0..<1) - 0.5) * 2 * (360 + Double.random(in: 0..<720)),
+            kind: kind, color: kidColors[(i + b.seed) % kidColors.count],
+            size: 8 + Double.random(in: 0..<10), phase: Double.random(in: 0..<6.28)
+        )
+    }
+}
+
+private struct BurstView: View {
+    let burst: KidBurst
+    let w: CGFloat
+    let h: CGFloat
+    let cell: CGFloat
+    let cy: CGFloat
+    @State private var parts: [Particle]
     @State private var done = false
+
+    init(burst: KidBurst, w: CGFloat, h: CGFloat, cell: CGFloat, cy: CGFloat) {
+        self.burst = burst
+        self.w = w
+        self.h = h
+        self.cell = cell
+        self.cy = cy
+        _parts = State(initialValue: makeParticles(burst))
+    }
 
     var body: some View {
         TimelineView(.animation(paused: done)) { ctx in
             Canvas { context, size in
-                let raw = min(1, max(0, ctx.date.timeIntervalSince(start) / 1.4))
-                let e = flyEase.value(raw)
-                let cx = size.width / 2
-                let cy = size.height / 2
-                for b in bits {
-                    var c = context
-                    c.translateBy(x: cx + b.dx * e, y: cy + (b.dy + 80) * e)
-                    c.rotate(by: .degrees(b.r * e))
-                    c.opacity = 1 - e
-                    let color = kidColors[b.colorIdx]
-                    if b.curl {
-                        var path = Path()
-                        path.addArc(center: .zero, radius: 17.5, startAngle: .degrees(135),
-                                    endAngle: .degrees(315), clockwise: false)
-                        c.stroke(path, with: .color(color), lineWidth: 5)
-                    } else {
-                        c.fill(Path(roundedRect: CGRect(x: -6, y: -9, width: 12, height: 18), cornerRadius: 3),
-                               with: .color(color))
+                let s = ctx.date.timeIntervalSince(burst.start)
+                let ox = burst.kind == 2
+                    ? size.width / 2
+                    : (size.width - CGFloat(burst.total) * cell) / 2 + (CGFloat(burst.slot) + 0.5) * cell
+                let oy = cy
+                if burst.kind < 2 {
+                    let rp = min(1, max(0, s / 0.45))
+                    if rp < 1 {
+                        let r = 20 + 80 * rp
+                        let ring = Path(ellipseIn: CGRect(x: ox - r, y: oy - r, width: r * 2, height: r * 2))
+                        context.stroke(ring, with: .color(Color.white.opacity(0.5 * (1 - rp))), lineWidth: 3)
                     }
                 }
+                for q in parts { draw(q, s, ox, oy, &context) }
             }
         }
+        .frame(width: w, height: h)
         .allowsHitTesting(false)
-        .task(id: token) {
-            done = false
-            try? await Task.sleep(nanoseconds: 1_500_000_000)
+        .task {
+            try? await Task.sleep(nanoseconds: 1_900_000_000)
             done = true
+        }
+    }
+
+    private func draw(_ q: Particle, _ s: Double, _ ox: CGFloat, _ oy: CGFloat, _ context: inout GraphicsContext) {
+        let life = 1.7
+        if s < 0 || s > life { return }
+        let k = 2.2
+        let d = (1 - exp(-k * s)) / k
+        let x = Double(ox) + q.vx * d + sin(q.phase + s * 7) * 6 * min(s, 1)
+        let y = Double(oy) + q.vy * d + 0.5 * 900 * s * s
+        let a = s > life * 0.65 ? 1 - (s - life * 0.65) / (life * 0.35) : 1
+        let sc = s < 0.12 ? s / 0.12 * 1.25 : (s < 0.2 ? 1.25 - (s - 0.12) / 0.08 * 0.25 : 1)
+        var c = context
+        c.translateBy(x: x, y: y)
+        c.rotate(by: .degrees(q.spin * s))
+        c.scaleBy(x: sc, y: sc)
+        c.opacity = min(1, max(0, a))
+        let sz = q.size
+        switch q.kind {
+        case 0:
+            c.fill(Path(roundedRect: CGRect(x: -sz * 0.5, y: -sz * 0.75, width: sz, height: sz * 1.5), cornerRadius: sz * 0.2),
+                   with: .color(q.color))
+        case 1:
+            c.fill(Path(ellipseIn: CGRect(x: -sz * 0.55, y: -sz * 0.55, width: sz * 1.1, height: sz * 1.1)),
+                   with: .color(q.color))
+        case 2:
+            var star = Path()
+            for i in 0..<10 {
+                let r = i % 2 == 0 ? sz : sz * 0.45
+                let ang = (-90.0 + Double(i) * 36) * Double.pi / 180
+                let p = CGPoint(x: cos(ang) * r, y: sin(ang) * r)
+                if i == 0 { star.move(to: p) } else { star.addLine(to: p) }
+            }
+            star.closeSubpath()
+            c.fill(star, with: .color(q.color))
+        case 3:
+            var heart = Path()
+            heart.move(to: CGPoint(x: 0, y: sz * 0.9))
+            heart.addCurve(to: CGPoint(x: 0, y: -sz * 0.4),
+                           control1: CGPoint(x: -sz * 1.4, y: -sz * 0.1),
+                           control2: CGPoint(x: -sz * 0.7, y: -sz * 1.1))
+            heart.addCurve(to: CGPoint(x: 0, y: sz * 0.9),
+                           control1: CGPoint(x: sz * 0.7, y: -sz * 1.1),
+                           control2: CGPoint(x: sz * 1.4, y: -sz * 0.1))
+            heart.closeSubpath()
+            c.fill(heart, with: .color(q.color))
+        case 4:
+            var arc = Path()
+            arc.addArc(center: .zero, radius: sz, startAngle: .degrees(135), endAngle: .degrees(315), clockwise: false)
+            c.stroke(arc, with: .color(q.color), lineWidth: sz * 0.3)
+        default:
+            c.fill(Path(roundedRect: CGRect(x: -sz * 0.18, y: -sz * 1.5, width: sz * 0.36, height: sz * 3), cornerRadius: sz * 0.15),
+                   with: .color(q.color))
         }
     }
 }

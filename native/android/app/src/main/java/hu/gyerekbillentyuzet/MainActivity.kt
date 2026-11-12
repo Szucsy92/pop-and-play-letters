@@ -11,6 +11,10 @@ import androidx.activity.compose.setContent
 import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.CubicBezierEasing
 import androidx.compose.animation.core.LinearEasing
+import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.infiniteRepeatable
+import androidx.compose.animation.core.rememberInfiniteTransition
+import androidx.compose.animation.core.spring
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
@@ -24,18 +28,21 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.State
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
@@ -51,35 +58,49 @@ import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.Shadow
+import androidx.compose.ui.graphics.drawscope.DrawScope
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.drawscope.rotate
+import androidx.compose.ui.graphics.drawscope.scale
 import androidx.compose.ui.graphics.drawscope.translate
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
+import androidx.compose.ui.text.SpanStyle
 import androidx.compose.ui.text.TextStyle
+import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardCapitalization
 import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.unit.Dp
+import androidx.compose.ui.unit.IntOffset
+import androidx.compose.ui.unit.TextUnit
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.core.view.WindowCompat
 import androidx.core.view.WindowInsetsCompat
 import androidx.core.view.WindowInsetsControllerCompat
 import androidx.lifecycle.viewmodel.compose.viewModel
-import hu.gyerekbillentyuzet.core.audio.NativeSoundEngine
-import hu.gyerekbillentyuzet.feature.keypad.Bit
+import hu.gyerekbillentyuzet.feature.keypad.Burst
+import hu.gyerekbillentyuzet.feature.keypad.KeypadUiState
 import hu.gyerekbillentyuzet.feature.keypad.KeypadViewModel
-import hu.gyerekbillentyuzet.feature.keypad.Shown
+import hu.gyerekbillentyuzet.feature.keypad.Typed
 import hu.gyerekbillentyuzet.feature.lock.ChildLockController
 import kotlinx.coroutines.delay
+import kotlin.math.PI
+import kotlin.math.cos
+import kotlin.math.exp
 import kotlin.math.hypot
 import kotlin.math.max
 import kotlin.math.min
+import kotlin.math.sin
+import kotlin.random.Random
 
 // ---- Téma: a webes styles.css oklch-színei sRGB-ben ----
 private val Background = Color(0xFF131428)
@@ -138,42 +159,14 @@ class MainActivity : ComponentActivity() {
     }
 }
 
-// ---- Animációs segédek (CSS keyframes portja) ----
-private val KidEase = CubicBezierEasing(0.2f, 0.9f, 0.3f, 1.2f)
-private val FlyEase = CubicBezierEasing(0f, 0f, 0.58f, 1f)
-
-private fun track(t: Float, vararg stops: Pair<Float, Float>): Float {
-    if (t <= stops.first().first) return stops.first().second
-    for (i in 1 until stops.size) {
-        val (t1, v1) = stops[i]
-        if (t <= t1) {
-            val (t0, v0) = stops[i - 1]
-            val local = (t - t0) / (t1 - t0)
-            return v0 + (v1 - v0) * KidEase.transform(local)
-        }
-    }
-    return stops.last().second
-}
-
 @Composable
 fun KeypadApp(vm: KeypadViewModel = viewModel()) {
     val st by vm.state.collectAsState()
     val activity = androidx.compose.ui.platform.LocalContext.current as? MainActivity
-    val sound = remember { NativeSoundEngine() }
     val lock = remember { ChildLockController { vm.showMenu() } }
     val focus = remember { FocusRequester() }
     val keyboard = LocalSoftwareKeyboardController.current
     var input by remember { mutableStateOf("") }
-
-    val onPress: (String) -> Unit = { ch ->
-        if (ch.isNotEmpty() && ch != " ") {
-            vm.press(ch)
-            if (vm.state.value.soundEnabled) {
-                val seed = ch.first().code
-                sound.play(seed, seed % 3 == 0)
-            }
-        }
-    }
 
     // Telefon saját billentyűzete: fókusz + billentyűzet megjelenítése
     LaunchedEffect(st.mode, st.parentMenu, st.exited, st.loaded) {
@@ -210,7 +203,6 @@ fun KeypadApp(vm: KeypadViewModel = viewModel()) {
             }
     ) {
         val screenW = maxWidth
-        val screenH = maxHeight
         val btnW = minOf(screenW * 0.9f, 360.dp)
 
         if (!st.loaded) return@BoxWithConstraints
@@ -233,27 +225,21 @@ fun KeypadApp(vm: KeypadViewModel = viewModel()) {
 
         val inner = st.mode == "inner"
 
-        // Színpad (a nagy betű és a konfetti)
-        Box(
+        // Színpad: begépelt szöveg + felsorakozó nagy karakterek + konfetti
+        Stage(
+            st,
             Modifier
                 .align(Alignment.TopCenter)
                 .fillMaxWidth()
                 .then(if (inner) Modifier.fillMaxHeight(0.54f) else Modifier.fillMaxHeight()),
-            contentAlignment = Alignment.Center,
-        ) {
-            val shown = st.shown
-            if (shown != null) {
-                BitsCanvas(st.bits, shown.id)
-                StageChar(shown, min(screenW.value * 0.55f, screenH.value * 0.38f), screenH.value)
-            }
-        }
+        )
 
         // Telefon billentyűzete: rejtett beviteli mező
         if (st.mode == "native" && !st.parentMenu) {
             BasicTextField(
                 value = input,
                 onValueChange = { v ->
-                    if (v.isNotEmpty()) onPress(v.last().toString())
+                    if (v.isNotEmpty()) vm.press(v.last().toString())
                     input = ""
                 },
                 modifier = Modifier
@@ -289,7 +275,7 @@ fun KeypadApp(vm: KeypadViewModel = viewModel()) {
                                 color = KidColors[(ri * 3 + ki) % KidColors.size],
                                 fontSp = keySp,
                                 modifier = Modifier.weight(1f).fillMaxHeight(),
-                            ) { onPress(k) }
+                            ) { vm.press(k) }
                         }
                     }
                 }
@@ -341,6 +327,7 @@ fun KeypadApp(vm: KeypadViewModel = viewModel()) {
                 KidButton("Hang: ${if (st.soundEnabled) "be 🔊" else "ki 🔇"}", Secondary, Foreground, btnW) {
                     vm.setSound(!st.soundEnabled)
                 }
+                KidButton("Begépelt szöveg törlése 🗑", Secondary, Foreground, btnW) { vm.clearText() }
                 KidButton("Vissza a játékhoz", Primary, Background, btnW) {
                     vm.closeMenu(); activity?.hideSystemBars()
                 }
@@ -353,6 +340,252 @@ fun KeypadApp(vm: KeypadViewModel = viewModel()) {
     }
 }
 
+// ---- Színpad ----
+@Composable
+private fun Stage(st: KeypadUiState, modifier: Modifier) {
+    BoxWithConstraints(modifier) {
+        val sw = maxWidth.value
+        val sh = maxHeight.value
+        val cell = min(sw * 0.19f, sh * 0.34f)
+        val cy = sh * 0.60f
+        val bob = rememberInfiniteTransition(label = "bob").animateFloat(
+            initialValue = 0f,
+            targetValue = 1f,
+            animationSpec = infiniteRepeatable(tween(2400, easing = LinearEasing)),
+            label = "bobT",
+        )
+
+        HistoryPanel(
+            st.history, st.bump,
+            Modifier.align(Alignment.TopCenter).padding(top = 64.dp, start = 20.dp, end = 20.dp),
+        )
+        if (st.flying.isNotEmpty()) {
+            key(st.flyId) { FlyingRow(st.flying, sw, cell, cy) }
+        }
+        st.pending.forEachIndexed { i, t ->
+            key(t.id) { TypedChar(t, i, st.pending.size, sw, cell, cy, bob) }
+        }
+        st.bursts.forEach { b -> key(b.id) { BurstView(b, sw, cell, cy) } }
+    }
+}
+
+/** A már begépelt szöveg: minden betű a saját színével, és rugalmasan "megpattan", ha új betűk érkeznek. */
+@Composable
+private fun HistoryPanel(history: String, bump: Long, modifier: Modifier) {
+    if (history.isEmpty()) return
+    val s = remember { Animatable(1f) }
+    LaunchedEffect(bump) {
+        if (bump > 0) {
+            s.snapTo(1.12f)
+            s.animateTo(1f, spring(dampingRatio = 0.35f, stiffness = 500f))
+        }
+    }
+    val text = remember(history) {
+        buildAnnotatedString {
+            history.takeLast(48).forEach { c ->
+                withStyle(SpanStyle(color = KidColors[c.code % KidColors.size])) { append(c) }
+            }
+        }
+    }
+    Box(
+        modifier
+            .graphicsLayer { scaleX = s.value; scaleY = s.value }
+            .clip(RoundedCornerShape(16.dp))
+            .background(Color.White.copy(alpha = 0.07f))
+            .padding(horizontal = 14.dp, vertical = 8.dp),
+    ) {
+        Text(
+            text,
+            modifier = Modifier.fillMaxWidth(),
+            fontSize = 30.sp,
+            lineHeight = 38.sp,
+            fontWeight = FontWeight.Bold,
+            fontFamily = KidFont,
+            textAlign = TextAlign.Center,
+            letterSpacing = 2.sp,
+            maxLines = 3,
+            overflow = TextOverflow.Clip,
+        )
+    }
+}
+
+@Composable
+private fun BigChar(ch: String, colorIdx: Int, cell: Float) {
+    val shadowPx = with(LocalDensity.current) { (cell * 0.05f).dp.toPx() }
+    Box(Modifier.size(cell.dp), contentAlignment = Alignment.Center) {
+        Text(
+            ch,
+            style = TextStyle(
+                color = KidColors[colorIdx],
+                fontSize = (cell * 0.9f).sp,
+                lineHeight = (cell * 0.9f).sp,
+                fontWeight = FontWeight.Bold,
+                fontFamily = KidFont,
+                shadow = Shadow(Color.Black.copy(alpha = 0.35f), Offset(0f, shadowPx), 0f),
+            ),
+        )
+    }
+}
+
+/** Egy felugró karakter: rugós (túllendülő) belépés, utána finom lebegés; a sor többi tagja rugalmasan odébb csúszik. */
+@Composable
+private fun TypedChar(t: Typed, slot: Int, total: Int, sw: Float, cell: Float, cy: Float, bob: State<Float>) {
+    val targetX = (sw - total * cell) / 2f + slot * cell
+    val x by animateFloatAsState(targetX, spring(dampingRatio = 0.55f, stiffness = 300f), label = "x")
+    val p = remember { Animatable(0f) }
+    LaunchedEffect(Unit) { p.animateTo(1f, spring(dampingRatio = 0.34f, stiffness = 380f)) }
+    val dir = if (t.id % 2L == 0L) -1f else 1f
+    Box(
+        Modifier
+            .offset { IntOffset(x.dp.roundToPx(), (cy - cell / 2f).dp.roundToPx()) }
+            .size(cell.dp)
+            .graphicsLayer {
+                val v = p.value
+                val ph = (bob.value + slot * 0.17f) * 2f * PI.toFloat()
+                scaleX = v
+                scaleY = v * (1f + 0.18f * (1f - v))
+                rotationZ = (1f - v) * 28f * dir + sin(ph) * 2f
+                translationY = (1f - v) * (-0.5f * cell.dp.toPx()) + sin(ph) * 4.dp.toPx()
+                alpha = min(1f, v * 3f).coerceAtLeast(0f)
+            },
+        contentAlignment = Alignment.Center,
+    ) { BigChar(t.ch, t.colorIdx, cell) }
+}
+
+/** Az 5 betű hullámszerűen felrepül a begépelt szövegbe (kis "lendület-vétellel"), közben kicsinyedve elhalványul. */
+@Composable
+private fun FlyingRow(items: List<Typed>, sw: Float, cell: Float, cy: Float) {
+    val p = remember { Animatable(0f) }
+    LaunchedEffect(Unit) { p.animateTo(1f, tween(640, easing = LinearEasing)) }
+    val ease = remember { CubicBezierEasing(0.5f, -0.4f, 0.8f, 0.6f) }
+    val hy = 104f
+    items.forEachIndexed { i, t ->
+        val x = (sw - items.size * cell) / 2f + i * cell
+        Box(
+            Modifier
+                .offset { IntOffset(x.dp.roundToPx(), (cy - cell / 2f).dp.roundToPx()) }
+                .size(cell.dp)
+                .graphicsLayer {
+                    val local = ((p.value * 640f - i * 45f) / 460f).coerceIn(0f, 1f)
+                    val e = ease.transform(local)
+                    translationY = -(cy - hy).dp.toPx() * e
+                    val sc = 1f - 0.7f * e
+                    scaleX = sc
+                    scaleY = sc
+                    rotationZ = e * (i - 2) * 18f
+                    alpha = if (local > 0.7f) 1f - (local - 0.7f) / 0.3f else 1f
+                },
+            contentAlignment = Alignment.Center,
+        ) { BigChar(t.ch, t.colorIdx, cell) }
+    }
+}
+
+// ---- Mókás konfetti ----
+private class Particle(
+    val vx: Float, val vy: Float, val spin: Float, val kind: Int,
+    val color: Color, val size: Float, val phase: Float,
+)
+
+private fun makeParticles(b: Burst): List<Particle> {
+    val rnd = Random(b.id.toInt() * 7919 + 13)
+    val n = when (b.kind) { 0 -> 22; 1 -> 46; else -> 40 }
+    return List(n) { i ->
+        val ang = if (b.kind == 0) -90.0 + (rnd.nextDouble() - 0.5) * 140.0 else rnd.nextDouble() * 360.0
+        val speed = if (b.kind == 0) 280 + rnd.nextDouble() * 420 else 300 + rnd.nextDouble() * 500
+        val rad = Math.toRadians(ang)
+        var vy = (sin(rad) * speed).toFloat()
+        if (b.kind != 0) vy -= 220f
+        val kind = when (rnd.nextInt(10)) { 0, 1, 2 -> 0; 3, 4 -> 1; 5, 6 -> 2; 7 -> 3; 8 -> 4; else -> 5 }
+        Particle(
+            vx = (cos(rad) * speed).toFloat(),
+            vy = vy,
+            spin = ((rnd.nextDouble() - 0.5) * 2 * (360 + rnd.nextDouble() * 720)).toFloat(),
+            kind = kind,
+            color = KidColors[(i + b.seed) % KidColors.size],
+            size = (8 + rnd.nextDouble() * 10).toFloat(),
+            phase = (rnd.nextDouble() * 6.28).toFloat(),
+        )
+    }
+}
+
+@Composable
+private fun BurstView(b: Burst, sw: Float, cell: Float, cy: Float) {
+    val p = remember { Animatable(0f) }
+    LaunchedEffect(Unit) { p.animateTo(1f, tween(2000, easing = LinearEasing)) }
+    val parts = remember { makeParticles(b) }
+    Canvas(Modifier.fillMaxSize()) {
+        val s = p.value * 2f // eltelt másodperc
+        val ox = (if (b.kind == 2) sw / 2f else (sw - b.total * cell) / 2f + (b.slot + 0.5f) * cell).dp.toPx()
+        val oy = cy.dp.toPx()
+        if (b.kind < 2) {
+            val rp = (s / 0.45f).coerceIn(0f, 1f)
+            if (rp < 1f) {
+                drawCircle(
+                    Color.White.copy(alpha = 0.5f * (1f - rp)),
+                    (20f + 80f * rp).dp.toPx(),
+                    Offset(ox, oy),
+                    style = Stroke(3.dp.toPx()),
+                )
+            }
+        }
+        for (q in parts) drawParticle(q, s, ox, oy)
+    }
+}
+
+private fun DrawScope.drawParticle(q: Particle, s: Float, ox: Float, oy: Float) {
+    val life = 1.7f
+    if (s < 0f || s > life) return
+    val k = 2.2f
+    val d = (1f - exp(-k * s)) / k
+    val x = ox + (q.vx * d + sin(q.phase + s * 7f) * 6f * min(s, 1f)).dp.toPx()
+    val y = oy + (q.vy * d + 0.5f * 900f * s * s).dp.toPx()
+    val a = if (s > life * 0.65f) 1f - (s - life * 0.65f) / (life * 0.35f) else 1f
+    val sc = when {
+        s < 0.12f -> s / 0.12f * 1.25f
+        s < 0.2f -> 1.25f - (s - 0.12f) / 0.08f * 0.25f
+        else -> 1f
+    }
+    translate(x, y) {
+        rotate(q.spin * s, Offset.Zero) {
+            scale(sc, Offset.Zero) { drawShape(q, a.coerceIn(0f, 1f)) }
+        }
+    }
+}
+
+private fun DrawScope.drawShape(q: Particle, a: Float) {
+    val s = q.size.dp.toPx()
+    when (q.kind) {
+        0 -> drawRoundRect(q.color, Offset(-s * 0.5f, -s * 0.75f), Size(s, s * 1.5f), CornerRadius(s * 0.2f), alpha = a)
+        1 -> drawCircle(q.color, s * 0.55f, Offset.Zero, alpha = a)
+        2 -> {
+            val path = Path()
+            for (i in 0 until 10) {
+                val r = if (i % 2 == 0) s else s * 0.45f
+                val ang = (-90 + i * 36) * PI / 180.0
+                val px = (cos(ang) * r).toFloat()
+                val py = (sin(ang) * r).toFloat()
+                if (i == 0) path.moveTo(px, py) else path.lineTo(px, py)
+            }
+            path.close()
+            drawPath(path, q.color, alpha = a)
+        }
+        3 -> {
+            val path = Path()
+            path.moveTo(0f, s * 0.9f)
+            path.cubicTo(-s * 1.4f, -s * 0.1f, -s * 0.7f, -s * 1.1f, 0f, -s * 0.4f)
+            path.cubicTo(s * 0.7f, -s * 1.1f, s * 1.4f, -s * 0.1f, 0f, s * 0.9f)
+            path.close()
+            drawPath(path, q.color, alpha = a)
+        }
+        4 -> drawArc(
+            q.color, 135f, 180f, false, Offset(-s, -s), Size(s * 2f, s * 2f),
+            alpha = a, style = Stroke(s * 0.3f),
+        )
+        else -> drawRoundRect(q.color, Offset(-s * 0.18f, -s * 1.5f), Size(s * 0.36f, s * 3f), CornerRadius(s * 0.15f), alpha = a)
+    }
+}
+
+// ---- Közös elemek ----
 @Composable
 private fun Overlay(content: @Composable () -> Unit) {
     Column(
@@ -367,7 +600,7 @@ private fun Overlay(content: @Composable () -> Unit) {
 }
 
 @Composable
-private fun KidText(text: String, size: androidx.compose.ui.unit.TextUnit, color: Color, center: Boolean = false) {
+private fun KidText(text: String, size: TextUnit, color: Color, center: Boolean = false) {
     Text(
         text,
         color = color,
@@ -396,6 +629,12 @@ private fun KidButton(text: String, bg: Color, fg: Color, width: Dp, onClick: ()
 @Composable
 private fun KidKey(label: String, color: Color, fontSp: Float, modifier: Modifier, onDown: () -> Unit) {
     var pressed by remember { mutableStateOf(false) }
+    // Rugalmas "lenyomódás": túllendül, majd visszarugózik
+    val squish by animateFloatAsState(
+        if (pressed) 1f else 0f,
+        spring(dampingRatio = 0.45f, stiffness = 700f),
+        label = "squish",
+    )
     Box(
         modifier
             .pointerInput(Unit) {
@@ -407,7 +646,7 @@ private fun KidKey(label: String, color: Color, fontSp: Float, modifier: Modifie
                 })
             }
             .drawBehind {
-                val dy = (if (pressed) 1.dp else 4.dp).toPx()
+                val dy = (4.dp - 3.dp * squish).toPx()
                 drawRoundRect(
                     Color.Black.copy(alpha = 0.35f),
                     topLeft = Offset(0f, dy),
@@ -416,110 +655,14 @@ private fun KidKey(label: String, color: Color, fontSp: Float, modifier: Modifie
                 )
             }
             .graphicsLayer {
-                translationY = if (pressed) 3.dp.toPx() else 0f
-                scaleX = if (pressed) 0.96f else 1f
-                scaleY = if (pressed) 0.96f else 1f
+                translationY = 3.dp.toPx() * squish
+                scaleX = 1f - 0.06f * squish
+                scaleY = 1f - 0.06f * squish
             }
             .clip(RoundedCornerShape(14.4.dp))
             .background(color),
         contentAlignment = Alignment.Center,
     ) {
         Text(label, color = Background, fontSize = fontSp.sp, fontWeight = FontWeight.Bold, fontFamily = KidFont)
-    }
-}
-
-@Composable
-private fun StageChar(shown: Shown, sizeDp: Float, screenHDp: Float) {
-    val p = remember(shown.id) { Animatable(0f) }
-    LaunchedEffect(shown.id) { p.animateTo(1f, tween(1600, easing = LinearEasing)) }
-    val density = LocalDensity.current
-    val shadowPx = with(density) { (sizeDp * 0.06f).dp.toPx() }
-    Text(
-        shown.ch,
-        modifier = Modifier.graphicsLayer {
-            val t = p.value
-            val h = sizeDp.dp.toPx()
-            var scale = 1f
-            var scaleY = 1f
-            var rot = 0f
-            var ty = 0f
-            val alpha: Float
-            when (shown.anim) {
-                0 -> {
-                    scale = track(t, 0f to 0f, 0.2f to 1.15f, 0.35f to 1f, 1f to 0.6f)
-                    alpha = track(t, 0f to 0f, 0.2f to 1f, 0.75f to 1f, 1f to 0f)
-                }
-                1 -> {
-                    scale = track(t, 0f to 0f, 0.2f to 1f, 0.75f to 1f, 1f to 0.7f)
-                    rot = track(t, 0f to 0f, 0.2f to -10f, 0.35f to 8f, 0.5f to -4f, 0.75f to 0f, 1f to 0f)
-                    alpha = track(t, 0f to 1f, 0.75f to 1f, 1f to 0f)
-                }
-                2 -> {
-                    val fall = track(t, 0f to -0.6f * screenHDp.dp.toPx(), 0.25f to 0f)
-                    val bounce = track(t, 0.25f to 0f, 0.35f to -0.08f, 0.45f to 0f, 1f to 0.10f) * h
-                    ty = fall + bounce
-                    scaleY = track(t, 0f to 1f, 0.25f to 0.85f, 0.35f to 1f, 1f to 1f)
-                    alpha = track(t, 0f to 1f, 0.75f to 1f, 1f to 0f)
-                }
-                else -> {
-                    rot = track(t, 0f to -200f, 0.3f to 0f, 1f to 0f)
-                    scale = track(t, 0f to 0f, 0.3f to 1f, 1f to 1.3f)
-                    alpha = track(t, 0f to 1f, 0.75f to 1f, 1f to 0f)
-                }
-            }
-            scaleX = scale
-            this.scaleY = scale * scaleY
-            rotationZ = rot
-            translationY = ty
-            this.alpha = alpha.coerceIn(0f, 1f)
-        },
-        style = TextStyle(
-            color = KidColors[shown.colorIdx],
-            fontSize = sizeDp.sp,
-            lineHeight = sizeDp.sp,
-            fontWeight = FontWeight.Bold,
-            fontFamily = KidFont,
-            shadow = Shadow(Color.Black.copy(alpha = 0.35f), Offset(0f, shadowPx), 0f),
-        ),
-    )
-}
-
-@Composable
-private fun BitsCanvas(bits: List<Bit>, token: Long) {
-    val p = remember(token) { Animatable(0f) }
-    LaunchedEffect(token) { p.animateTo(1f, tween(1400, easing = FlyEase)) }
-    Canvas(Modifier.fillMaxSize()) {
-        val e = p.value
-        val center = Offset(size.width / 2f, size.height / 2f)
-        val a = (1f - e).coerceIn(0f, 1f)
-        for (b in bits) {
-            val pos = center + Offset(b.dx.dp.toPx() * e, (b.dy + 80f).dp.toPx() * e)
-            val color = KidColors[b.colorIdx]
-            translate(pos.x, pos.y) {
-                rotate(b.r * e, Offset.Zero) {
-                    if (b.curl) {
-                        val d = 35.dp.toPx()
-                        drawArc(
-                            color = color,
-                            startAngle = 135f,
-                            sweepAngle = 180f,
-                            useCenter = false,
-                            topLeft = Offset(-d / 2f, -d / 2f),
-                            size = Size(d, d),
-                            alpha = a,
-                            style = Stroke(width = 5.dp.toPx()),
-                        )
-                    } else {
-                        drawRoundRect(
-                            color = color,
-                            topLeft = Offset(-6.dp.toPx(), -9.dp.toPx()),
-                            size = Size(12.dp.toPx(), 18.dp.toPx()),
-                            cornerRadius = CornerRadius(3.dp.toPx()),
-                            alpha = a,
-                        )
-                    }
-                }
-            }
-        }
     }
 }
