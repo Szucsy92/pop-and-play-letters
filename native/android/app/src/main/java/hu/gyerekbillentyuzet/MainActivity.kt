@@ -29,6 +29,7 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
@@ -134,6 +135,7 @@ private val KidFont: FontFamily = try {
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        WindowCompat.setDecorFitsSystemWindows(window, false) // a billentyűzet-magasság (ime inset) így jut el a Compose-hoz
         window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
         hideSystemBars()
         pinApp() // Gyerekzár: induláskor azonnal rögzítjük a képernyőt (Lock Task Mode)
@@ -181,7 +183,8 @@ fun KeypadApp(vm: KeypadViewModel = viewModel()) {
     // Vissza gomb tiltva (mint a webes history.pushState trükk)
     BackHandler(enabled = true) { }
 
-    BoxWithConstraints(
+    // A háttér a teljes képernyőt kitölti; a tartalom a rendszer-billentyűzet fölötti részre szorul (imePadding).
+    Box(
         Modifier
             .fillMaxSize()
             .drawBehind {
@@ -194,6 +197,11 @@ fun KeypadApp(vm: KeypadViewModel = viewModel()) {
                     )
                 )
             }
+    ) {
+    BoxWithConstraints(
+        Modifier
+            .fillMaxSize()
+            .imePadding()
             .pointerInput(st.mode, st.parentMenu) {
                 detectTapGestures(onTap = {
                     if (st.mode == "native" && !st.parentMenu) {
@@ -339,6 +347,7 @@ fun KeypadApp(vm: KeypadViewModel = viewModel()) {
             }
         }
     }
+    }
 }
 
 // ---- Színpad ----
@@ -348,7 +357,9 @@ private fun Stage(st: KeypadUiState, modifier: Modifier) {
         val sw = maxWidth.value
         val sh = maxHeight.value
         val cell = min(sw * 0.19f, sh * 0.34f)
-        val cy = sh * 0.60f
+        // A sor középpontja: a szöveg-panel alatt, de a (billentyűzet miatt lecsökkent) színpadon belül marad.
+        val minCy = 64f + 134f + cell / 2f + 6f
+        val cy = min(max(sh * 0.60f, minCy), sh - cell / 2f - 8f)
         val bob = rememberInfiniteTransition(label = "bob").animateFloat(
             initialValue = 0f,
             targetValue = 1f,
