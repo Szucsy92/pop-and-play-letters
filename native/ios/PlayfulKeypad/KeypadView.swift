@@ -98,8 +98,6 @@ struct KeypadView: View {
         }
     }
 
-    /// iOS-en a Guided Access csak felügyelt eszközön / Single App Mode-ban kapcsolható programból;
-    /// egyébként a hívás hatástalan, ilyenkor a szülő a Guided Access-t kézzel indítja.
     private func setGuidedAccess(_ on: Bool) {
         UIAccessibility.requestGuidedAccessSession(enabled: on) { _ in }
     }
@@ -108,12 +106,10 @@ struct KeypadView: View {
     private func gameView(w: CGFloat, h: CGFloat) -> some View {
         let inner = vm.mode == "inner"
         ZStack {
-            // színpad: begépelt szöveg, felsorakozó karakterek, konfetti
             StageView(vm: vm, w: w, h: inner ? h * 0.54 : h)
                 .frame(width: w, height: inner ? h * 0.54 : h)
                 .frame(width: w, height: h, alignment: .top)
 
-            // telefon billentyűzete
             if vm.mode == "native" && !vm.parentMenu {
                 TextField("", text: $systemInput)
                     .textInputAutocapitalization(.characters)
@@ -129,14 +125,12 @@ struct KeypadView: View {
                     .onAppear { keyboardFocused = true }
             }
 
-            // nagy színes gombok
             if inner {
                 keysView(w: w)
                     .frame(width: w, height: h * 0.414)
                     .frame(width: w, height: h, alignment: .bottom)
             }
 
-            // lakat
             Text("🔒")
                 .font(.system(size: 24))
                 .frame(width: 48, height: 48)
@@ -237,7 +231,6 @@ struct KeypadView: View {
     }
 }
 
-// ---- Részek ----
 private struct KidBackground: View {
     var body: some View {
         GeometryReader { g in
@@ -325,12 +318,10 @@ private struct KidKey: View {
             }
             pressed = down
         }, perform: {})
-        // Rugalmas "lenyomódás": gyors, túllendülő lenyomás és visszarugózás.
         .animation(.spring(response: 0.25, dampingFraction: 0.42), value: pressed)
     }
 }
 
-// ---- Színpad ----
 private struct StageView: View {
     let vm: KeypadViewModel
     let w: CGFloat
@@ -338,7 +329,6 @@ private struct StageView: View {
 
     var body: some View {
         let cell = min(w * 0.19, h * 0.34)
-        // A sor középpontja: a szöveg-panel alatt, de a (billentyűzet miatt lecsökkent) színpadon belül marad.
         let cy = min(max(h * 0.60, 64 + 134 + cell / 2 + 6), h - cell / 2 - 8)
         ZStack {
             HistoryPanel(history: vm.history, bump: vm.bump)
@@ -365,7 +355,6 @@ private struct StageView: View {
     }
 }
 
-/// A már begépelt szöveg: minden betű a saját színével, és rugalmasan "megpattan", ha új betűk érkeznek.
 private struct HistoryPanel: View {
     let history: String
     let bump: Int
@@ -400,7 +389,6 @@ private struct HistoryPanel: View {
     }
 }
 
-/// Szín keverése fehér/fekete felé (világos kitöltés, sötét körvonal).
 private func mixColor(_ c: Color, _ to: Color, _ t: CGFloat) -> Color {
     var r1: CGFloat = 0, g1: CGFloat = 0, b1: CGFloat = 0, a1: CGFloat = 0
     var r2: CGFloat = 0, g2: CGFloat = 0, b2: CGFloat = 0, a2: CGFloat = 0
@@ -409,7 +397,7 @@ private func mixColor(_ c: Color, _ to: Color, _ t: CGFloat) -> Color {
     return Color(red: r1 + (r2 - r1) * t, green: g1 + (g2 - g1) * t, blue: b1 + (b2 - b1) * t)
 }
 
-/// Meseszerű betű: sötét körvonal + színátmenetes kitöltés, mögötte puha kör fény.
+/// Meseszerű betű: optimalizált betűméret és körvonal az elvágások elkerülésére.
 private struct BigChar: View {
     let ch: String
     let colorIdx: Int
@@ -419,11 +407,10 @@ private struct BigChar: View {
         let c = kidColors[colorIdx]
         let light = mixColor(c, .white, 0.5)
         let deep = mixColor(c, .black, 0.38)
-        let o = cell * 0.045
+        let o = cell * 0.035
         let story = !ch.isEmpty && ch.allSatisfy { $0.isLetter || $0.isNumber }
-        let glyph = Text(ch).font(kidFont(cell * 0.9)).lineLimit(1).fixedSize()
+        let glyph = Text(ch).font(kidFont(cell * 0.75)).lineLimit(1).fixedSize()
         ZStack {
-            // Átlátszó háttér + puha, fátyolos kör fény, ami a szélén teljesen átlátszóra fakul (nincs éle, nincs elvágva).
             Circle()
                 .fill(RadialGradient(
                     stops: [
@@ -433,7 +420,7 @@ private struct BigChar: View {
                         .init(color: c.opacity(0), location: 1),
                     ],
                     center: .center, startRadius: 0, endRadius: cell * 0.78))
-                .frame(width: cell * 1.56, height: cell * 1.56)
+                .frame(width: cell * 1.4, height: cell * 1.4)
                 .allowsHitTesting(false)
             if story {
                 ForEach(0..<8, id: \.self) { i in
@@ -451,7 +438,6 @@ private struct BigChar: View {
     }
 }
 
-/// Egy felugró karakter: rugós (túllendülő) belépés, utána finom lebegés; a sor többi tagja rugalmasan odébb csúszik.
 private struct TypedChar: View {
     let item: KidTyped
     let slot: Int
@@ -480,7 +466,6 @@ private struct TypedChar: View {
     }
 }
 
-/// Az 5 betű hullámszerűen felrepül a begépelt szövegbe (kis "lendület-vétellel"), közben kicsinyedve elhalványul.
 private struct FlyingRow: View {
     let items: [KidTyped]
     let start: Date
@@ -492,7 +477,7 @@ private struct FlyingRow: View {
 
     var body: some View {
         TimelineView(.animation(paused: done)) { ctx in
-            let p = ctx.date.timeIntervalSince(start) * 1000 // ms
+            let p = ctx.date.timeIntervalSince(start) * 1000
             ZStack {
                 ForEach(Array(items.enumerated()), id: \.element.id) { i, t in
                     let local = min(1, max(0, (p - Double(i) * 45) / 460))
@@ -515,7 +500,6 @@ private struct FlyingRow: View {
     }
 }
 
-// ---- Mókás konfetti ----
 private struct Particle {
     let vx: Double, vy: Double, spin: Double
     let kind: Int
