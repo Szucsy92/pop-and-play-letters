@@ -1,7 +1,7 @@
 name: Natív build – Android APK és iOS IPA
 
 # A native/android (Kotlin + Compose) és a native/ios (SwiftUI) forrásokból épít.
-# A Capacitor-os app-build.yml változatlan marad.
+# Ez az egyetlen hivatalos build- és release-folyamat Androidra és iOS-re.
 on:
   workflow_dispatch:
   push:
@@ -75,32 +75,27 @@ jobs:
             echo "ANDROID_KEYSTORE_FILE=$KS_FILE" >> "$GITHUB_ENV"
             echo "signed=true" >> "$GITHUB_OUTPUT"
           else
-            echo "::notice::Nincs ANDROID_KEYSTORE_* titok (vagy külső PR) – debug APK készül."
+            echo "::notice::Nincs Android aláírókulcs – aláíratlan Release APK készül, debug build nélkül."
             echo "signed=false" >> "$GITHUB_OUTPUT"
           fi
 
-      - name: Release APK (aláírt)
-        if: steps.ks.outputs.signed == 'true'
+      - name: Natív Android release APK
         env:
           ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
           ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
         run: |
-          set -euxo pipefail
+          set -euo pipefail
           gradle -p native/android assembleRelease --no-daemon
-          ls -la native/android/app/build/outputs/apk/release/
           APK=$(find native/android/app/build/outputs/apk/release -name '*.apk' | head -n1)
+          test -n "$APK"
           mkdir -p out
           cp "$APK" "out/gyerek-billentyuzet-native-${BUILD_STAMP}.apk"
-          APKSIGNER=$(find "${ANDROID_HOME:-/usr/local/lib/android/sdk}/build-tools" -name apksigner | sort -V | tail -n1)
-          "$APKSIGNER" verify --verbose out/*.apk
-
-      - name: Debug APK (aláíratlan kulccsal nem rendelkező futás)
-        if: steps.ks.outputs.signed != 'true'
-        run: |
-          set -euo pipefail
-          gradle -p native/android assembleDebug --no-daemon
-          mkdir -p out
-          cp native/android/app/build/outputs/apk/debug/app-debug.apk "out/gyerek-billentyuzet-native-${BUILD_STAMP}-debug.apk"
+          if [ -n "${ANDROID_KEYSTORE_FILE:-}" ]; then
+            APKSIGNER=$(find "${ANDROID_HOME:-/usr/local/lib/android/sdk}/build-tools" -name apksigner | sort -V | tail -n1)
+            "$APKSIGNER" verify --verbose "out/gyerek-billentyuzet-native-${BUILD_STAMP}.apk"
+          else
+            echo "::notice::A release APK aláíratlan; nincs debug build."
+          fi
 
       - name: Kulcs törlése a futtatóról
         if: always()
@@ -151,8 +146,8 @@ jobs:
           if-no-files-found: error
 
   release:
-    # Csak kézi indításnál vagy main-re pusholáskor, és csak ha az Android sikeres.
-    if: ${{ always() && needs.android.result == 'success' && github.event_name != 'pull_request' }}
+    # Csak kézi indításnál vagy main-re pusholáskor, ha mindkét natív build sikeres.
+    if: ${{ always() && needs.android.result == 'success' && needs.ios.result == 'success' && github.event_name != 'pull_request' }}
     needs: [stamp, android, ios]
     runs-on: ubuntu-latest
     permissions:
@@ -166,8 +161,9 @@ jobs:
         with:
           tag_name: native-${{ needs.stamp.outputs.stamp }}-${{ needs.stamp.outputs.code }}
           name: Natív build ${{ needs.stamp.outputs.version }}
-          prerelease: true
+          prerelease: false
+          make_latest: true
           body: |
             Natív (Kotlin/SwiftUI) build · ${{ needs.stamp.outputs.version }} (#${{ needs.stamp.outputs.code }})
-            Android: APK (kulcs esetén aláírt, különben debug). iOS: aláíratlan IPA – AltStore/Sideloadly-val aláírandó.
+            Android: natív Release APK (kulcs esetén aláírt, különben aláíratlan; debug build nincs). iOS: natív Release IPA aláíratlan – telepítés előtt Apple-aláírás szükséges.
           files: out/*
