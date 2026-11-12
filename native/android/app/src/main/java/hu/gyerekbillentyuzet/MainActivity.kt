@@ -72,7 +72,6 @@ import androidx.compose.ui.graphics.CompositingStrategy
 import androidx.compose.ui.graphics.StrokeJoin
 import androidx.compose.ui.graphics.lerp
 import androidx.compose.ui.graphics.Path
-import androidx.compose.ui.graphics.Shadow
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.drawscope.DrawScope
 import androidx.compose.ui.graphics.drawscope.Fill
@@ -91,7 +90,6 @@ import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardCapitalization
 import androidx.compose.ui.text.style.TextAlign
-import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.IntOffset
@@ -118,7 +116,6 @@ import kotlin.math.min
 import kotlin.math.sin
 import kotlin.random.Random
 
-// ---- Téma: a webes styles.css oklch-színei sRGB-ben ----
 private val Background = Color(0xFF131428)
 private val BackgroundCenter = Color(0xFF262445)
 private val Foreground = Color(0xFFF0F1F9)
@@ -132,7 +129,6 @@ private val KidColors = listOf(
     Color(0xFF00BEFA), Color(0xFFDA74F1), Color(0xFFFF9F5F),
 )
 
-// ---- Billentyűzet: a telefon billentyűzetéhez hasonló kiosztás, de a felesleges kapcsolók helyén vicces formák ----
 private const val K_TYPE = 0
 private const val K_SPACE = 1
 private const val K_SEND = 2
@@ -143,19 +139,16 @@ private data class KeySpec(val label: String, val weight: Float = 1f, val kind: 
 private fun letters(s: String) = s.map { KeySpec(it.toString()) }
 private fun funKey(label: String, weight: Float = 1f, kind: Int = K_TYPE) = KeySpec(label, weight, kind, true)
 
-// Felső "kezelősáv": kerek emoji gombok (beírják magukat)
 private val FunTop = listOf("🦄", "🐸", "🌈", "🍭", "👻", "🐙").map { funKey(it) }
 
-// QWERTY (mint a képen). Ha QWERTZ kell: "QWERTYUIOP" -> "QWERTZUIOP" és "ZXCVBNM" -> "YXCVBNM".
 private val KeyRows: List<List<KeySpec>> = listOf(
     letters("1234567890"),
     letters("QWERTYUIOP"),
     listOf(KeySpec("", 0.5f, K_GAP)) + letters("ASDFGHJKL") + KeySpec("", 0.5f, K_GAP),
-    listOf(funKey("⭐", 1.5f)) + letters("ZXCVBNM") + funKey("🎈", 1.5f), // shift és törlés helyén
+    listOf(funKey("⭐", 1.5f)) + letters("ZXCVBNM") + funKey("🎈", 1.5f),
     listOf(funKey("🍩", 1.5f), funKey("♥"), funKey("~ ~ ~", 5f, K_SPACE), funKey("★"), funKey("🚀", 1.5f, K_SEND)),
 )
 
-// A web Fredoka betűjéhez legközelebbi kerekített rendszerbetű.
 private val KidFont: FontFamily = try {
     FontFamily(Typeface.create("sans-serif-rounded", Typeface.BOLD))
 } catch (_: Throwable) {
@@ -166,16 +159,16 @@ class MainActivity : ComponentActivity() {
     private val keypadVm: KeypadViewModel by viewModels()
 
     override fun onStop() {
-        keypadVm.wipe() // háttérbe kerüléskor / kilépéskor a puffer törlődik
+        keypadVm.wipe()
         super.onStop()
     }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        WindowCompat.setDecorFitsSystemWindows(window, false) // a billentyűzet-magasság (ime inset) így jut el a Compose-hoz
+        WindowCompat.setDecorFitsSystemWindows(window, false)
         window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
         hideSystemBars()
-        pinApp() // Gyerekzár: induláskor azonnal rögzítjük a képernyőt (Lock Task Mode)
+        pinApp()
         setContent { KeypadApp() }
     }
 
@@ -208,7 +201,6 @@ fun KeypadApp(vm: KeypadViewModel = viewModel()) {
     val keyboard = LocalSoftwareKeyboardController.current
     var input by remember { mutableStateOf("") }
 
-    // Telefon saját billentyűzete: fókusz + billentyűzet megjelenítése
     LaunchedEffect(st.mode, st.parentMenu, st.exited, st.loaded) {
         if (st.loaded && st.mode == "native" && !st.parentMenu && !st.exited) {
             delay(150)
@@ -217,10 +209,8 @@ fun KeypadApp(vm: KeypadViewModel = viewModel()) {
         }
     }
 
-    // Vissza gomb tiltva (mint a webes history.pushState trükk)
     BackHandler(enabled = true) { }
 
-    // A háttér a teljes képernyőt kitölti; a tartalom a rendszer-billentyűzet fölötti részre szorul (imePadding).
     Box(
         Modifier
             .fillMaxSize()
@@ -271,7 +261,6 @@ fun KeypadApp(vm: KeypadViewModel = viewModel()) {
 
         val inner = st.mode == "inner"
 
-        // Színpad: begépelt szöveg + felsorakozó nagy karakterek + konfetti
         Stage(
             st,
             Modifier
@@ -280,7 +269,6 @@ fun KeypadApp(vm: KeypadViewModel = viewModel()) {
                 .then(if (inner) Modifier.fillMaxHeight(0.47f) else Modifier.fillMaxHeight()),
         )
 
-        // Telefon billentyűzete: rejtett beviteli mező
         if (st.mode == "native" && !st.parentMenu) {
             BasicTextField(
                 value = input,
@@ -302,7 +290,6 @@ fun KeypadApp(vm: KeypadViewModel = viewModel()) {
             )
         }
 
-        // Nagy színes gombok (a telefon billentyűzetéhez hasonló kiosztás)
         if (inner) {
             val keySp = (screenW.value * 0.055f).coerceIn(16f, 30f)
             FunKeyboard(
@@ -321,7 +308,6 @@ fun KeypadApp(vm: KeypadViewModel = viewModel()) {
             }
         }
 
-        // Lakat: 5 gyors koppintás (2 mp-en belül) nyitja a szülői menüt
         Box(
             Modifier
                 .align(Alignment.TopEnd)
@@ -334,7 +320,6 @@ fun KeypadApp(vm: KeypadViewModel = viewModel()) {
             Text("🔒", fontSize = 24.sp)
         }
 
-        // Billentyűzet-választó
         if (st.mode == null) {
             Overlay {
                 KidText("Melyik billentyűzet legyen?", 30.sp, Foreground, center = true)
@@ -355,7 +340,6 @@ fun KeypadApp(vm: KeypadViewModel = viewModel()) {
             }
         }
 
-        // Szülői menü
         if (st.parentMenu) {
             Overlay {
                 KidText("Szülői menü", 30.sp, Foreground)
@@ -371,7 +355,7 @@ fun KeypadApp(vm: KeypadViewModel = viewModel()) {
                     vm.closeMenu(); activity?.hideSystemBars()
                 }
                 KidButton("Kilépés", Destructive, DestructiveForeground, btnW) {
-                    activity?.unpinApp() // gyerekzár feloldása
+                    activity?.unpinApp()
                     vm.exit()
                 }
             }
@@ -380,14 +364,12 @@ fun KeypadApp(vm: KeypadViewModel = viewModel()) {
     }
 }
 
-// ---- Színpad ----
 @Composable
 private fun Stage(st: KeypadUiState, modifier: Modifier) {
     BoxWithConstraints(modifier) {
         val sw = maxWidth.value
         val sh = maxHeight.value
         val cell = min(sw * 0.19f, sh * 0.34f)
-        // A sor középpontja: a szöveg-panel alatt, de a (billentyűzet miatt lecsökkent) színpadon belül marad.
         val minCy = 64f + 134f + cell / 2f + 6f
         val cy = min(max(sh * 0.60f, minCy), sh - cell / 2f - 8f)
         val bob = rememberInfiniteTransition(label = "bob").animateFloat(
@@ -411,7 +393,6 @@ private fun Stage(st: KeypadUiState, modifier: Modifier) {
     }
 }
 
-/** A már begépelt szöveg: görgethető, minden betű a saját színével, új betűnél lágyan megpattan és az aljára görget. */
 @Composable
 private fun HistoryPanel(history: String, bump: Long, modifier: Modifier) {
     if (history.isEmpty()) return
@@ -423,7 +404,6 @@ private fun HistoryPanel(history: String, bump: Long, modifier: Modifier) {
             s.animateTo(1f, spring(dampingRatio = 0.4f, stiffness = 260f))
         }
     }
-    // Ha nő a szöveg, az alját mutatjuk; felfelé görgetve végigböngészhető.
     LaunchedEffect(Unit) {
         snapshotFlow { scroll.maxValue }.collectLatest { scroll.animateScrollTo(it) }
     }
@@ -461,7 +441,6 @@ private fun HistoryPanel(history: String, bump: Long, modifier: Modifier) {
     }
 }
 
-/** Négyágú "tündérpor" csillag a nullpont körül. */
 private fun sparklePath(r: Float): Path {
     val path = Path()
     val pts = listOf(0f to -1f, 0.22f to -0.22f, 1f to 0f, 0.22f to 0.22f, 0f to 1f, -0.22f to 0.22f, -1f to 0f, -0.22f to -0.22f)
@@ -470,18 +449,14 @@ private fun sparklePath(r: Float): Path {
     return path
 }
 
-/**
- * Meseszerű betű: átlátszó háttér, mögötte puha, fátyolos kör alakú fény, ami szélén teljesen átlátszóra fakul,
- * ezért sehol nem látszik éle és nincs elvágva (nincs Text-árnyék, ami a szövegdoboz szélén levágódna).
- * A betű mesekönyv-stílusú: sötétebb körvonal + színátmenetes kitöltés. Az emoji/szimbólum csak a fényt kapja.
- */
+/// Meseszerű betű: optimalizált méret és körvonal az elvágásmentes megjelenésért.
 @Composable
 private fun BigChar(ch: String, colorIdx: Int, cell: Float, glow: State<Float>? = null) {
     val c = KidColors[colorIdx]
     val density = LocalDensity.current
-    val outlinePx = with(density) { (cell * 0.065f).dp.toPx() }
+    val outlinePx = with(density) { (cell * 0.045f).dp.toPx() }
     val story = ch.isNotEmpty() && ch.all { it.isLetterOrDigit() }
-    val fs = (cell * 0.9f).sp
+    val fs = (cell * 0.75f).sp
     val light = lerp(c, Color.White, 0.50f)
     val deep = lerp(c, Color.Black, 0.38f)
     val fillBrush = Brush.verticalGradient(listOf(light, c, lerp(c, deep, 0.45f)))
@@ -490,7 +465,6 @@ private fun BigChar(ch: String, colorIdx: Int, cell: Float, glow: State<Float>? 
         Modifier
             .size(cell.dp)
             .drawBehind {
-                // A rajz a Box határán túl is folytatódhat; a gradiens a sugár végén 0 alfára fakul -> nincs él.
                 val g = glow?.value ?: 0.4f
                 val r = size.minDimension * 0.78f
                 drawCircle(
@@ -534,14 +508,13 @@ private fun BigChar(ch: String, colorIdx: Int, cell: Float, glow: State<Float>? 
     }
 }
 
-/** Egy felugró karakter: rugós (túllendülő) belépés, utána finom lebegés; a sor többi tagja rugalmasan odébb csúszik. */
 @Composable
 private fun TypedChar(t: Typed, slot: Int, total: Int, sw: Float, cell: Float, cy: Float, bob: State<Float>) {
     val targetX = (sw - total * cell) / 2f + slot * cell
     val x by animateFloatAsState(targetX, spring(dampingRatio = 0.55f, stiffness = 300f), label = "x")
     val p = remember { Animatable(0f) }
     val glow = remember { Animatable(1f) }
-    LaunchedEffect(Unit) { p.animateTo(1f, spring(dampingRatio = 0.38f, stiffness = 220f)) } // puha, nagyot lendülő
+    LaunchedEffect(Unit) { p.animateTo(1f, spring(dampingRatio = 0.38f, stiffness = 220f)) }
     LaunchedEffect(Unit) { glow.animateTo(0.4f, tween(1100)) }
     val dir = if (t.id % 2L == 0L) -1f else 1f
     Box(
@@ -552,17 +525,16 @@ private fun TypedChar(t: Typed, slot: Int, total: Int, sw: Float, cell: Float, c
                 val v = p.value
                 val ph = (bob.value + slot * 0.17f) * 2f * PI.toFloat()
                 scaleX = v
-                scaleY = v * (1f + 0.24f * (1f - v)) // zselés összenyomódás a csúcson
+                scaleY = v * (1f + 0.24f * (1f - v))
                 rotationZ = (1f - v) * 34f * dir + sin(ph) * 2f
                 translationY = (1f - v) * (-0.75f * cell.dp.toPx()) + sin(ph) * 4.dp.toPx()
                 alpha = min(1f, v * 3f).coerceAtLeast(0f)
-                compositingStrategy = CompositingStrategy.ModulateAlpha // a glow ne vágódjon négyzetre
+                compositingStrategy = CompositingStrategy.ModulateAlpha
             },
         contentAlignment = Alignment.Center,
     ) { BigChar(t.ch, t.colorIdx, cell, glow.asState()) }
 }
 
-/** Az 5 betű hullámszerűen felrepül a begépelt szövegbe (kis "lendület-vétellel"), közben kicsinyedve elhalványul. */
 @Composable
 private fun FlyingRow(items: List<Typed>, sw: Float, cell: Float, cy: Float) {
     val p = remember { Animatable(0f) }
@@ -591,7 +563,6 @@ private fun FlyingRow(items: List<Typed>, sw: Float, cell: Float, cy: Float) {
     }
 }
 
-// ---- Mókás konfetti: kevesebb, de sokféle (10 alak) és izzó ----
 private class Particle(
     val vx: Float, val vy: Float, val spin: Float, val kind: Int,
     val color: Color, val size: Float, val phase: Float,
@@ -600,7 +571,7 @@ private class Particle(
 private fun makeParticles(b: Burst): List<Particle> {
     val rnd = Random(b.id.toInt() * 7919 + 13)
     val n = when (b.kind) { 0 -> 7; 1 -> 15; else -> 13 }
-    val kinds = (0 until 10).shuffled(rnd) // egy robbanáson belül minél több különböző alak
+    val kinds = (0 until 10).shuffled(rnd)
     return List(n) { i ->
         val ang = if (b.kind == 0) -90.0 + (rnd.nextDouble() - 0.5) * 140.0 else rnd.nextDouble() * 360.0
         val speed = if (b.kind == 0) 280 + rnd.nextDouble() * 380 else 300 + rnd.nextDouble() * 460
@@ -625,7 +596,7 @@ private fun BurstView(b: Burst, sw: Float, cell: Float, cy: Float) {
     LaunchedEffect(Unit) { p.animateTo(1f, tween(2000, easing = LinearEasing)) }
     val parts = remember { makeParticles(b) }
     Canvas(Modifier.fillMaxSize()) {
-        val s = p.value * 2f // eltelt másodperc
+        val s = p.value * 2f
         val ox = (if (b.kind == 2) sw / 2f else (sw - b.total * cell) / 2f + (b.slot + 0.5f) * cell).dp.toPx()
         val oy = cy.dp.toPx()
         for (q in parts) drawParticle(q, s, ox, oy)
@@ -650,7 +621,6 @@ private fun DrawScope.drawParticle(q: Particle, s: Float, ox: Float, oy: Float) 
             scale(sc, Offset.Zero) {
                 val aa = a.coerceIn(0f, 1f)
                 val u = q.size.dp.toPx()
-                // glow: ugyanaz az alak egyre vastagabb, halványabb körvonallal -> a forma szélét követi (nem kör)
                 drawShape(q, aa * 0.10f, u * 1.4f)
                 drawShape(q, aa * 0.17f, u * 0.8f)
                 drawShape(q, aa * 0.28f, u * 0.38f)
@@ -662,13 +632,12 @@ private fun DrawScope.drawParticle(q: Particle, s: Float, ox: Float, oy: Float) 
 
 private fun DrawScope.drawShape(q: Particle, a: Float, grow: Float = 0f) {
     val s = q.size.dp.toPx()
-    // grow > 0: csak a körvonal vastagított változata (glow-réteg); 0: tömör alak
     val fs = if (grow > 0f) Stroke(grow, cap = StrokeCap.Round, join = StrokeJoin.Round) else Fill
     when (q.kind) {
         0 -> drawRoundRect(q.color, Offset(-s * 0.5f, -s * 0.75f), Size(s, s * 1.5f), CornerRadius(s * 0.2f), alpha = a, style = fs)
         1 -> drawCircle(q.color, s * 0.55f, Offset.Zero, alpha = a, style = fs)
-        2 -> drawPath(polyPath(10) { i -> if (i % 2 == 0) s else s * 0.45f }, q.color, alpha = a, style = fs) // csillag
-        3 -> { // szív
+        2 -> drawPath(polyPath(10) { i -> if (i % 2 == 0) s else s * 0.45f }, q.color, alpha = a, style = fs)
+        3 -> {
             val path = Path()
             path.moveTo(0f, s * 0.9f)
             path.cubicTo(-s * 1.4f, -s * 0.1f, -s * 0.7f, -s * 1.1f, 0f, -s * 0.4f)
@@ -677,7 +646,7 @@ private fun DrawScope.drawShape(q: Particle, a: Float, grow: Float = 0f) {
             drawPath(path, q.color, alpha = a, style = fs)
         }
         4 -> drawArc(q.color, 135f, 180f, false, Offset(-s, -s), Size(s * 2f, s * 2f), alpha = a, style = Stroke(s * 0.3f + grow, cap = StrokeCap.Round))
-        5 -> { // kunkori vonal
+        5 -> {
             val w = s * 0.55f
             val path = Path()
             path.moveTo(-w * 2f, 0f)
@@ -687,14 +656,13 @@ private fun DrawScope.drawShape(q: Particle, a: Float, grow: Float = 0f) {
             path.quadraticBezierTo(w * 1.5f, w, w * 2f, 0f)
             drawPath(path, q.color, alpha = a, style = Stroke(s * 0.3f + grow, cap = StrokeCap.Round))
         }
-        6 -> drawCircle(q.color, s * 0.6f, Offset.Zero, alpha = a, style = Stroke(s * 0.28f + grow)) // gyűrű
-        7 -> drawPath(polyPath(4) { s * 0.9f }, q.color, alpha = a, style = fs) // rombusz
-        8 -> drawPath(polyPath(3) { s * 0.95f }, q.color, alpha = a, style = fs) // háromszög
-        else -> drawPath(sparklePath(s), q.color, alpha = a, style = fs) // négyágú szikra
+        6 -> drawCircle(q.color, s * 0.6f, Offset.Zero, alpha = a, style = Stroke(s * 0.28f + grow))
+        7 -> drawPath(polyPath(4) { s * 0.9f }, q.color, alpha = a, style = fs)
+        8 -> drawPath(polyPath(3) { s * 0.95f }, q.color, alpha = a, style = fs)
+        else -> drawPath(sparklePath(s), q.color, alpha = a, style = fs)
     }
 }
 
-/** Szabályos sokszög / csillag útvonala a nullpont körül; a sugarat az index adja. */
 private fun polyPath(n: Int, radius: (Int) -> Float): Path {
     val path = Path()
     for (i in 0 until n) {
@@ -708,7 +676,6 @@ private fun polyPath(n: Int, radius: (Int) -> Float): Path {
     return path
 }
 
-// ---- Közös elemek ----
 @Composable
 private fun Overlay(content: @Composable () -> Unit) {
     Column(
@@ -773,7 +740,6 @@ private fun FunKeyboard(fontSp: Float, modifier: Modifier, onKey: (KeySpec) -> U
     }
 }
 
-/** A felső sáv: kerek emoji gombok. Nyugodtan állnak, csak lenyomáskor mozdulnak (KidKey rugós lenyomása). */
 @Composable
 private fun FunToolbar(modifier: Modifier, fontSp: Float, onKey: (KeySpec) -> Unit) {
     Row(modifier, horizontalArrangement = Arrangement.SpaceEvenly, verticalAlignment = Alignment.CenterVertically) {
@@ -803,7 +769,6 @@ private fun KidKey(label: String, color: Color, fontSp: Float, modifier: Modifie
             rippleProgress.animateTo(1f, tween(460, easing = FastOutSlowInEasing))
         }
     }
-    // Puha, rugalmas "lenyomódás": túllendül, majd visszarugózik
     val squish by animateFloatAsState(
         if (pressed) 1f else 0f,
         spring(dampingRatio = 0.4f, stiffness = 550f),
