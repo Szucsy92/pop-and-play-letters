@@ -397,7 +397,7 @@ private func mixColor(_ c: Color, _ to: Color, _ t: CGFloat) -> Color {
     return Color(red: r1 + (r2 - r1) * t, green: g1 + (g2 - g1) * t, blue: b1 + (b2 - b1) * t)
 }
 
-/// Meseszerű betű: optimalizált betűméret és körvonal az elvágások elkerülésére.
+/// Meseszerű betű: nagyobb karakterek és erős, élénk háttérfény (glow).
 private struct BigChar: View {
     let ch: String
     let colorIdx: Int
@@ -409,18 +409,18 @@ private struct BigChar: View {
         let deep = mixColor(c, .black, 0.38)
         let o = cell * 0.035
         let story = !ch.isEmpty && ch.allSatisfy { $0.isLetter || $0.isNumber }
-        let glyph = Text(ch).font(kidFont(cell * 0.75)).lineLimit(1).fixedSize()
+        let glyph = Text(ch).font(kidFont(cell * 0.88)).lineLimit(1).fixedSize()
         ZStack {
             Circle()
                 .fill(RadialGradient(
                     stops: [
-                        .init(color: c.opacity(0.45), location: 0),
-                        .init(color: c.opacity(0.22), location: 0.45),
-                        .init(color: c.opacity(0.07), location: 0.75),
+                        .init(color: c.opacity(0.75), location: 0),
+                        .init(color: c.opacity(0.45), location: 0.45),
+                        .init(color: c.opacity(0.15), location: 0.75),
                         .init(color: c.opacity(0), location: 1),
                     ],
-                    center: .center, startRadius: 0, endRadius: cell * 0.78))
-                .frame(width: cell * 1.4, height: cell * 1.4)
+                    center: .center, startRadius: 0, endRadius: cell * 0.95))
+                .frame(width: cell * 1.7, height: cell * 1.7)
                 .allowsHitTesting(false)
             if story {
                 ForEach(0..<8, id: \.self) { i in
