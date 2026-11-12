@@ -132,7 +132,7 @@ struct KeypadView: View {
             // nagy színes gombok
             if inner {
                 keysView(w: w)
-                    .frame(width: w, height: h * 0.46)
+                    .frame(width: w, height: h * 0.414)
                     .frame(width: w, height: h, alignment: .bottom)
             }
 
@@ -158,20 +158,25 @@ struct KeypadView: View {
 
     private func keysView(w: CGFloat) -> some View {
         let fontSize = min(32, max(16, w * 0.05))
-        return VStack(spacing: 6) {
-            ForEach(0..<keypadRows.count, id: \.self) { ri in
-                HStack(spacing: 6) {
-                    ForEach(0..<keypadRows[ri].count, id: \.self) { ki in
-                        let key = keypadRows[ri][ki]
-                        KidKey(label: key, color: kidColors[(ri * 3 + ki) % kidColors.count], size: fontSize) {
-                            vm.press(key)
+        return GeometryReader { geometry in
+            let verticalPadding: CGFloat = 24
+            let spacing: CGFloat = 6 * CGFloat(keypadRows.count - 1)
+            let unit = max(1, (geometry.size.height - verticalPadding - spacing) / 4.6)
+            VStack(spacing: 6) {
+                ForEach(0..<keypadRows.count, id: \.self) { ri in
+                    HStack(spacing: 6) {
+                        ForEach(0..<keypadRows[ri].count, id: \.self) { ki in
+                            let key = keypadRows[ri][ki]
+                            KidKey(label: key, color: kidColors[(ri * 3 + ki) % kidColors.count], size: fontSize) {
+                                vm.press(key)
+                            }
                         }
                     }
+                    .frame(height: unit * (ri == keypadRows.count - 1 ? 1 : 0.9))
                 }
-                .frame(maxHeight: .infinity)
             }
+            .padding(EdgeInsets(top: 8, leading: 8, bottom: 16, trailing: 8))
         }
-        .padding(EdgeInsets(top: 8, leading: 8, bottom: 16, trailing: 8))
     }
 
     private func overlayPanel<Content: View>(@ViewBuilder _ content: () -> Content) -> some View {
@@ -277,6 +282,7 @@ private struct KidKey: View {
     let size: CGFloat
     let onDown: () -> Void
     @State private var pressed = false
+    @State private var ripple = false
 
     var body: some View {
         ZStack {
@@ -285,18 +291,42 @@ private struct KidKey: View {
                 .offset(y: pressed ? 1 : 4)
             RoundedRectangle(cornerRadius: 14.4)
                 .fill(color)
+                .overlay {
+                    GeometryReader { proxy in
+                        Circle()
+                            .fill(
+                                RadialGradient(
+                                    colors: [.white.opacity(0.34), color.opacity(0.20), .clear],
+                                    center: .center,
+                                    startRadius: 2,
+                                    endRadius: max(proxy.size.width, proxy.size.height) * 0.72
+                                )
+                            )
+                            .frame(width: max(proxy.size.width, proxy.size.height) * 1.45,
+                                   height: max(proxy.size.width, proxy.size.height) * 1.45)
+                            .scaleEffect(ripple ? 1 : 0.12)
+                            .opacity(ripple ? 0 : 0.9)
+                            .position(x: proxy.size.width / 2, y: proxy.size.height / 2)
+                            .allowsHitTesting(false)
+                    }
+                    .clipShape(RoundedRectangle(cornerRadius: 14.4))
+                }
                 .overlay(Text(label).font(kidFont(size)).foregroundStyle(Kid.background))
                 .offset(y: pressed ? 3 : 0)
                 .scaleEffect(pressed ? 0.94 : 1)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .contentShape(Rectangle())
+        .contentShape(RoundedRectangle(cornerRadius: 14.4))
         .onLongPressGesture(minimumDuration: 0, maximumDistance: 60, pressing: { down in
+            if down {
+                ripple = false
+                withAnimation(.easeOut(duration: 0.48)) { ripple = true }
+                onDown()
+            }
             pressed = down
-            if down { onDown() }
         }, perform: {})
-        // Rugalmas "lenyomódás": túllendül, majd visszarugózik
-        .animation(.spring(response: 0.25, dampingFraction: 0.45), value: pressed)
+        // Rugalmas "lenyomódás": gyors, túllendülő lenyomás és visszarugózás.
+        .animation(.spring(response: 0.25, dampingFraction: 0.42), value: pressed)
     }
 }
 
@@ -379,6 +409,8 @@ private struct BigChar: View {
         Text(ch)
             .font(kidFont(cell * 0.9))
             .foregroundStyle(kidColors[colorIdx])
+            .shadow(color: kidColors[colorIdx].opacity(0.34), radius: cell * 0.22, x: 0, y: 0)
+            .shadow(color: kidColors[colorIdx].opacity(0.18), radius: cell * 0.42, x: 0, y: 0)
             .shadow(color: Color.black.opacity(0.35), radius: 0, x: 0, y: cell * 0.05)
             .lineLimit(1)
             .fixedSize()

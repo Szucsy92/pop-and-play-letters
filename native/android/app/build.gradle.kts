@@ -56,5 +56,4 @@ dependencies {
     implementation("androidx.compose.foundation:foundation")
     implementation("androidx.compose.animation:animation")
     implementation("androidx.compose.ui:ui-text")
-    debugImplementation("androidx.compose.ui:ui-tooling")
 }

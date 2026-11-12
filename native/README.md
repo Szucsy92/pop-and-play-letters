@@ -1,20 +1,25 @@
-# Native migration (Android + iOS)
+# Natív alkalmazás (Android + iOS)
 
-This folder contains native application implementations alongside the original Capacitor/Web app. The original web project is intentionally preserved.
+Ez a könyvtár tartalmazza az eredeti, hivatalos Android- és iOS-alkalmazás forrásait. A natív forrás az egyetlen build- és release-forrás; a korábbi webes/Capacitor build workflow megszűnt.
 
 ## Android
-Open `android/` in Android Studio (Ladybug/Koala or newer), sync Gradle, then run on a device.
+Nyisd meg az `android/` mappát Android Studio-ban (Ladybug/Koala vagy újabb verzió).
 - Kotlin + Jetpack Compose + Material 3
-- Feature-first folders, ViewModel/StateFlow, Preferences DataStore
-- Internal Hungarian keypad, system keyboard mode, character animations, Canvas confetti, synthesized low-latency tones, parent menu (5 taps / 2 sec), fullscreen and optional Android screen pinning.
+- Belső magyar billentyűzet és rendszerbillentyűzet mód
+- Karakteranimációk, Canvas konfetti, szintetizált hangok
+- Ruganyos gombnyomás, fátyolos körhullám
+- Szülői menü (5 koppintás / 2 mp), teljes képernyő és opcionális képernyőrögzítés
 
 ## iOS
-Open `ios/PlayfulKeypad.xcodeproj` in Xcode 16+ and run on iOS 17+.
-- SwiftUI, `@Observable`, `UserDefaults`, Canvas confetti, AVAudioEngine tone generation, 5-tap parent menu.
-- Guided Access is **not** programmatically enabled by an ordinary app. The app displays its status and directs the parent to enable it in iOS Settings / Accessibility.
+Nyisd meg az `ios/PlayfulKeypad.xcodeproj` projektet Xcode 16+-ban; iOS 17+ szükséges.
+- SwiftUI, `@Observable`, `UserDefaults`, Canvas konfetti, AVAudioEngine hanggenerálás
+- Belső billentyűzet és rendszerbillentyűzet mód
+- Ruganyos gombnyomás és animált, lekerekített körhullám
+- 5 koppintásos szülői menü
 
-## Important production notes
-- This is a native migration implementation, not a signed release. Device testing, accessibility testing, audio tuning and store signing remain required.
-- Android `startLockTask()` is not guaranteed to lock down a consumer device: screen pinning may show a system confirmation. Full managed kiosk mode requires Device Owner / enterprise provisioning. The parent menu's “screen pinning” action is explicit (not silently activated on launch).
-- Neither platform can reliably suppress all system gestures from an ordinary app. Use Android screen pinning/Lock Task and iOS Guided Access at OS level.
-- The existing app's original sound engine synthesizes sound in Web Audio; native versions synthesize tones too, so no copyrighted/external sound assets are needed.
+## Build és release
+A `.github/workflows/native-build.yml` építi mindkét platform Release változatát, és csak akkor publikál közös GitHub Release-t, ha az Android- és iOS-build is sikeres. Debug build nem készül.
+- Android: a `ANDROID_KEYSTORE_BASE64` és `ANDROID_KEYSTORE_PASSWORD` GitHub-secretekkel aláírt APK; ezek nélkül aláíratlan Release APK.
+- iOS: aláíratlan IPA. App Store/TestFlight vagy közvetlen eszköztelepítés előtt Apple signing certificate és provisioning profile szükséges.
+
+A rendszerfunkciók korlátozásai miatt az Android Lock Task Mode és az iOS Guided Access nem garantálható programból minden fogyasztói eszközön. iOS-en szükség lehet a Guided Access kézi bekapcsolására.

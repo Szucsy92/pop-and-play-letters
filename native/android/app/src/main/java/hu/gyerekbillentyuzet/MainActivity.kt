@@ -10,6 +10,7 @@ import androidx.activity.compose.BackHandler
 import androidx.activity.compose.setContent
 import androidx.activity.viewModels
 import androidx.compose.animation.core.Animatable
+import androidx.compose.animation.core.FastOutSlowInEasing
 import androidx.compose.animation.core.CubicBezierEasing
 import androidx.compose.animation.core.LinearEasing
 import androidx.compose.animation.core.animateFloat
@@ -103,6 +104,7 @@ import hu.gyerekbillentyuzet.feature.keypad.KeypadViewModel
 import hu.gyerekbillentyuzet.feature.keypad.Typed
 import hu.gyerekbillentyuzet.feature.lock.ChildLockController
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.flow.collectLatest
 import kotlin.math.PI
 import kotlin.math.cos
@@ -305,7 +307,7 @@ fun KeypadApp(vm: KeypadViewModel = viewModel()) {
                 modifier = Modifier
                     .align(Alignment.BottomCenter)
                     .fillMaxWidth()
-                    .fillMaxHeight(0.53f)
+                    .fillMaxHeight(0.477f)
                     .padding(start = 8.dp, end = 8.dp, top = 8.dp, bottom = 16.dp),
             ) { k ->
                 when (k.kind) {
@@ -466,8 +468,21 @@ private fun BigChar(ch: String, colorIdx: Int, cell: Float, glow: State<Float>? 
             .drawBehind {
                 // lágy, színes fényudvar a betű mögött (az újonnan érkezett erősebb, aztán csillapodik)
                 val g = glow?.value ?: 0.4f
-                val r = size.minDimension * 0.9f
-                drawCircle(Brush.radialGradient(listOf(c.copy(alpha = 0.5f * g), Color.Transparent), center, r), r, center)
+                val glowShape = size.minDimension * 0.78f
+                val glowBrush = Brush.radialGradient(
+                    0f to c.copy(alpha = 0.42f * g),
+                    0.58f to c.copy(alpha = 0.16f * g),
+                    1f to Color.Transparent,
+                    center = center,
+                    radius = glowShape,
+                )
+                // A fény a karakter lekerekített, kompakt formáját követi, nem négyzetes panelt rajzol.
+                drawRoundRect(
+                    brush = glowBrush,
+                    topLeft = Offset(size.width * 0.12f, size.height * 0.12f),
+                    size = Size(size.width * 0.76f, size.height * 0.76f),
+                    cornerRadius = CornerRadius(size.minDimension * 0.34f),
+                )
             },
         contentAlignment = Alignment.Center,
     ) {
@@ -718,7 +733,7 @@ private fun FunKeyboard(fontSp: Float, modifier: Modifier, onKey: (KeySpec) -> U
     Column(modifier, verticalArrangement = Arrangement.spacedBy(6.dp)) {
         FunToolbar(Modifier.weight(0.85f).fillMaxWidth(), fontSp, onKey)
         KeyRows.forEachIndexed { ri, row ->
-            Row(Modifier.weight(1f).fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+            Row(Modifier.weight(if (ri == KeyRows.lastIndex) 1f else 0.9f).fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                 row.forEachIndexed { ki, k ->
                     if (k.kind == K_GAP) {
                         Spacer(Modifier.weight(k.weight))
@@ -766,6 +781,8 @@ private fun FunToolbar(modifier: Modifier, fontSp: Float, onKey: (KeySpec) -> Un
 @Composable
 private fun KidKey(label: String, color: Color, fontSp: Float, modifier: Modifier, funShape: Boolean = false, onDown: () -> Unit) {
     var pressed by remember { mutableStateOf(false) }
+    var ripple by remember { mutableStateOf(false) }
+    val rippleProgress = remember { Animatable(1f) }
     // Puha, rugalmas "lenyomódás": túllendül, majd visszarugózik
     val squish by animateFloatAsState(
         if (pressed) 1f else 0f,
@@ -780,6 +797,9 @@ private fun KidKey(label: String, color: Color, fontSp: Float, modifier: Modifie
             .pointerInput(Unit) {
                 detectTapGestures(onPress = {
                     pressed = true
+                    ripple = true
+                    rippleProgress.snapTo(0f)
+                    launch { rippleProgress.animateTo(1f, tween(460, easing = FastOutSlowInEasing)) }
                     onDown()
                     tryAwaitRelease()
                     pressed = false
@@ -793,10 +813,6 @@ private fun KidKey(label: String, color: Color, fontSp: Float, modifier: Modifie
                     size = size,
                     cornerRadius = CornerRadius(corner.toPx()),
                 )
-                if (squish > 0.01f) { // lenyomáskor a gomb színe felizzik
-                    val r = size.maxDimension * 0.8f
-                    drawCircle(Brush.radialGradient(listOf(color.copy(alpha = 0.6f * squish), Color.Transparent), center, r), r, center)
-                }
             }
             .graphicsLayer {
                 translationY = 3.dp.toPx() * squish
@@ -808,5 +824,22 @@ private fun KidKey(label: String, color: Color, fontSp: Float, modifier: Modifie
         contentAlignment = Alignment.Center,
     ) {
         Text(label, color = fg, fontSize = fontSp.sp, fontWeight = FontWeight.Bold, fontFamily = KidFont, maxLines = 1)
+        if (ripple && rippleProgress.value < 1f) {
+            Canvas(Modifier.matchParentSize().clip(RoundedCornerShape(corner))) {
+                val p = rippleProgress.value
+                val radius = size.maxDimension * (0.12f + 0.95f * p)
+                drawCircle(
+                    Brush.radialGradient(
+                        0f to Color.White.copy(alpha = 0.24f * (1f - p)),
+                        0.65f to color.copy(alpha = 0.2f * (1f - p)),
+                        1f to Color.Transparent,
+                        center = center,
+                        radius = radius,
+                    ),
+                    radius = radius,
+                    center = center,
+                )
+            }
+        }
     }
 }
