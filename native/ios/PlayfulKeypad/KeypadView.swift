@@ -400,21 +400,85 @@ private struct HistoryPanel: View {
     }
 }
 
+/// Szín keverése fehér/fekete felé (világos kitöltés, sötét körvonal).
+private func mixColor(_ c: Color, _ to: Color, _ t: CGFloat) -> Color {
+    var r1: CGFloat = 0, g1: CGFloat = 0, b1: CGFloat = 0, a1: CGFloat = 0
+    var r2: CGFloat = 0, g2: CGFloat = 0, b2: CGFloat = 0, a2: CGFloat = 0
+    UIColor(c).getRed(&r1, green: &g1, blue: &b1, alpha: &a1)
+    UIColor(to).getRed(&r2, green: &g2, blue: &b2, alpha: &a2)
+    return Color(red: r1 + (r2 - r1) * t, green: g1 + (g2 - g1) * t, blue: b1 + (b2 - b1) * t)
+}
+
+/// Négyágú "tündérpor" csillag.
+private struct SparkleShape: Shape {
+    func path(in rect: CGRect) -> Path {
+        let c = CGPoint(x: rect.midX, y: rect.midY)
+        let r = min(rect.width, rect.height) / 2
+        let pts: [(CGFloat, CGFloat)] = [(0, -1), (0.22, -0.22), (1, 0), (0.22, 0.22), (0, 1), (-0.22, 0.22), (-1, 0), (-0.22, -0.22)]
+        var p = Path()
+        for (i, q) in pts.enumerated() {
+            let pt = CGPoint(x: c.x + q.0 * r, y: c.y + q.1 * r)
+            if i == 0 { p.move(to: pt) } else { p.addLine(to: pt) }
+        }
+        p.closeSubpath()
+        return p
+    }
+}
+
+/// Meseszerű betű: a fény a betű saját körvonalát követi (árnyék-alapú glow, nincs négyzet/kör panel),
+/// mesekönyv-stílusú sötét körvonallal, színátmenetes kitöltéssel és pislákoló csillagokkal.
 private struct BigChar: View {
     let ch: String
     let colorIdx: Int
     let cell: CGFloat
+    var twinkle: Bool = false
 
     var body: some View {
-        Text(ch)
-            .font(kidFont(cell * 0.9))
-            .foregroundStyle(kidColors[colorIdx])
-            .shadow(color: kidColors[colorIdx].opacity(0.34), radius: cell * 0.22, x: 0, y: 0)
-            .shadow(color: kidColors[colorIdx].opacity(0.18), radius: cell * 0.42, x: 0, y: 0)
-            .shadow(color: Color.black.opacity(0.35), radius: 0, x: 0, y: cell * 0.05)
-            .lineLimit(1)
-            .fixedSize()
-            .frame(width: cell, height: cell)
+        let c = kidColors[colorIdx]
+        let light = mixColor(c, .white, 0.5)
+        let deep = mixColor(c, .black, 0.38)
+        let o = cell * 0.045
+        let story = !ch.isEmpty && ch.allSatisfy { $0.isLetter || $0.isNumber }
+        let glyph = Text(ch).font(kidFont(cell * 0.9)).lineLimit(1).fixedSize()
+        ZStack {
+            glyph.foregroundStyle(c)
+                .shadow(color: c.opacity(0.85), radius: cell * 0.16, x: 0, y: 0)
+                .shadow(color: c.opacity(0.40), radius: cell * 0.34, x: 0, y: 0)
+            if story {
+                ForEach(0..<8, id: \.self) { i in
+                    let a = Double(i) * Double.pi / 4
+                    glyph.foregroundStyle(deep).offset(x: CGFloat(cos(a)) * o, y: CGFloat(sin(a)) * o)
+                }
+                glyph.foregroundStyle(
+                    LinearGradient(colors: [light, c, mixColor(c, deep, 0.45)], startPoint: .top, endPoint: .bottom)
+                )
+            } else {
+                glyph.foregroundStyle(c)
+            }
+        }
+        .frame(width: cell, height: cell)
+        .overlay {
+            if story && twinkle {
+                TimelineView(.animation) { ctx in
+                    let t = ctx.date.timeIntervalSinceReferenceDate / 2.4
+                    ZStack {
+                        ForEach(0..<3, id: \.self) { i in
+                            let ph = (t * 2 + Double(i) * 0.34 + Double(colorIdx) * 0.13).truncatingRemainder(dividingBy: 1)
+                            let k = max(0, sin(ph * Double.pi))
+                            let spots: [(CGFloat, CGFloat)] = [(0.06, 0.20), (0.95, 0.32), (0.82, 0.95)]
+                            SparkleShape()
+                                .fill(Color(red: 1, green: 0.96, blue: 0.78))
+                                .frame(width: cell * (0.06 + 0.17 * k), height: cell * (0.06 + 0.17 * k))
+                                .rotationEffect(.degrees(ph * 90))
+                                .opacity(0.3 + 0.7 * k)
+                                .position(x: spots[i].0 * cell, y: spots[i].1 * cell)
+                        }
+                    }
+                    .frame(width: cell, height: cell)
+                }
+                .allowsHitTesting(false)
+            }
+        }
     }
 }
 
@@ -432,7 +496,7 @@ private struct TypedChar: View {
     var body: some View {
         let dir: Double = item.id % 2 == 0 ? -1 : 1
         let targetX = (w - CGFloat(total) * cell) / 2 + CGFloat(slot) * cell + cell / 2
-        BigChar(ch: item.ch, colorIdx: item.colorIdx, cell: cell)
+        BigChar(ch: item.ch, colorIdx: item.colorIdx, cell: cell, twinkle: true)
             .scaleEffect(x: shown ? 1 : 0, y: shown ? 1 : 0)
             .rotationEffect(.degrees(shown ? 0 : 28 * dir))
             .offset(y: shown ? 0 : -cell * 0.5)
@@ -543,14 +607,6 @@ private struct BurstView: View {
                     ? size.width / 2
                     : (size.width - CGFloat(burst.total) * cell) / 2 + (CGFloat(burst.slot) + 0.5) * cell
                 let oy = cy
-                if burst.kind < 2 {
-                    let rp = min(1, max(0, s / 0.45))
-                    if rp < 1 {
-                        let r = 20 + 80 * rp
-                        let ring = Path(ellipseIn: CGRect(x: ox - r, y: oy - r, width: r * 2, height: r * 2))
-                        context.stroke(ring, with: .color(Color.white.opacity(0.5 * (1 - rp))), lineWidth: 3)
-                    }
-                }
                 for q in parts { draw(q, s, ox, oy, &context) }
             }
         }
