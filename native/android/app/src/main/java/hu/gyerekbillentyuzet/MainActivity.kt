@@ -37,6 +37,7 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.requiredSize
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
@@ -52,7 +53,9 @@ import androidx.compose.runtime.State
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.key
+import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.snapshotFlow
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
@@ -65,10 +68,12 @@ import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.geometry.CornerRadius
 import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Rect
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.CompositingStrategy
+import androidx.compose.ui.graphics.GraphicsLayerScope
 import androidx.compose.ui.graphics.StrokeJoin
 import androidx.compose.ui.graphics.lerp
 import androidx.compose.ui.graphics.Path
@@ -80,7 +85,10 @@ import androidx.compose.ui.graphics.drawscope.rotate
 import androidx.compose.ui.graphics.drawscope.scale
 import androidx.compose.ui.graphics.drawscope.translate
 import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.input.pointer.PointerEventPass
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.layout.onGloballyPositioned
+import androidx.compose.ui.layout.positionInRoot
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.text.SpanStyle
@@ -108,6 +116,7 @@ import hu.gyerekbillentyuzet.feature.lock.ChildLockController
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.collectLatest
 import kotlin.math.PI
+import kotlin.math.abs
 import kotlin.math.cos
 import kotlin.math.exp
 import kotlin.math.hypot
@@ -273,9 +282,20 @@ fun KeypadApp(vm: KeypadViewModel = viewModel()) {
             BasicTextField(
                 value = input,
                 onValueChange = { v ->
+                    // Egyszerre érkezhet több karakter is (gyors, egyidejű nyomás). Egy hosszú
+                    // beillesztés / szójavaslat esetén csak az utolsót vesszük.
                     if (v.isNotEmpty()) {
-                        val cp = v.codePointBefore(v.length)
-                        vm.press(String(Character.toChars(cp)))
+                        if (v.length <= 4) {
+                            var i = 0
+                            while (i < v.length) {
+                                val cp = v.codePointAt(i)
+                                vm.press(String(Character.toChars(cp)))
+                                i += Character.charCount(cp)
+                            }
+                        } else {
+                            val cp = v.codePointBefore(v.length)
+                            vm.press(String(Character.toChars(cp)))
+                        }
                     }
                     input = ""
                 },
@@ -297,8 +317,7 @@ fun KeypadApp(vm: KeypadViewModel = viewModel()) {
                 modifier = Modifier
                     .align(Alignment.BottomCenter)
                     .fillMaxWidth()
-                    .fillMaxHeight(0.477f)
-                    .padding(start = 8.dp, end = 8.dp, top = 8.dp, bottom = 16.dp),
+                    .fillMaxHeight(0.477f),
             ) { k ->
                 when (k.kind) {
                     K_SPACE -> vm.pressSpace()
@@ -364,14 +383,57 @@ fun KeypadApp(vm: KeypadViewModel = viewModel()) {
     }
 }
 
+// ---- Karakter-sor elrendezés ----
+private const val GLOW_R = 0.80f   // a glow sugara a cella méretében (a doboz szélén túl is ér)
+private const val EDGE_DP = 8f     // biztonsági margó a képernyő szélétől (a glow is belefér)
+private const val JUMP = 1.2f      // ennyi cellányit ugrik be felülről a karakter
+
+/** Egy karakter vízszintes "helye" a sorban cellában mérve: a keskeny betűk közelebb kerülnek egymáshoz. */
+private fun advance(ch: String): Float {
+    val letter = ch.isNotEmpty() && ch.all { it.isLetterOrDigit() }
+    return when {
+        !letter -> 0.95f
+        ch == "W" || ch == "M" -> 0.84f
+        ch == "I" || ch == "1" -> 0.52f
+        else -> 0.68f
+    }
+}
+
+/** Ha a sor (glow-val együtt) nem férne el a képernyőn, ennyiszeresére zsugorítjuk. */
+private fun rowFit(chars: List<String>, sw: Float, cell: Float): Float {
+    if (chars.isEmpty()) return 1f
+    val adv = chars.map { advance(it) }
+    val over = max(GLOW_R - adv.first() / 2f, GLOW_R - adv.last() / 2f)
+    val need = (adv.sum() + 2f * over) * cell
+    return min(1f, (sw - 2f * EDGE_DP) / need)
+}
+
+/** A karakterek középpontjai (dp), a sor a képernyő közepére igazítva. */
+private fun rowCenters(chars: List<String>, sw: Float, cell: Float): List<Float> {
+    val adv = chars.map { advance(it) }
+    var x = (sw - adv.sum() * cell) / 2f
+    return adv.map { a ->
+        val c = x + a * cell / 2f
+        x += a * cell
+        c
+    }
+}
+
 @Composable
 private fun Stage(st: KeypadUiState, modifier: Modifier) {
     BoxWithConstraints(modifier) {
         val sw = maxWidth.value
         val sh = maxHeight.value
-        val cell = min(sw * 0.19f, sh * 0.34f)
-        val minCy = 64f + 134f + cell / 2f + 6f
-        val cy = min(max(sh * 0.60f, minCy), sh - cell / 2f - 8f)
+        val topReserve = 64f + 134f + 6f // előzmény-panel helye
+        // 5 betűs sor + glow pont elfér a szélességben; magasságban is marad hely a glow-nak és az ugrásnak.
+        val wCell = (sw - 2f * EDGE_DP) / 4.32f
+        val vCell = (sh - topReserve - 12f) / (GLOW_R + 0.55f)
+        val cell0 = min(wCell, max(vCell, wCell * 0.75f))
+        val chars = st.pending.map { it.ch }
+        val fit = rowFit(chars, sw, cell0)
+        val cell by animateFloatAsState(cell0 * fit, spring(dampingRatio = 0.7f, stiffness = 350f), label = "cell")
+        val cy = min(max(sh * 0.60f, topReserve + cell0 * 0.55f), sh - GLOW_R * cell0 - 12f)
+        val centers = rowCenters(chars, sw, cell)
         val bob = rememberInfiniteTransition(label = "bob").animateFloat(
             initialValue = 0f,
             targetValue = 1f,
@@ -384,12 +446,15 @@ private fun Stage(st: KeypadUiState, modifier: Modifier) {
             Modifier.align(Alignment.TopCenter).padding(top = 64.dp, start = 20.dp, end = 20.dp),
         )
         if (st.flying.isNotEmpty()) {
-            key(st.flyId) { FlyingRow(st.flying, sw, cell, cy) }
+            key(st.flyId) {
+                val fc = cell0 * rowFit(st.flying.map { it.ch }, sw, cell0)
+                FlyingRow(st.flying, sw, fc, cy)
+            }
         }
         st.pending.forEachIndexed { i, t ->
-            key(t.id) { TypedChar(t, i, st.pending.size, sw, cell, cy, bob) }
+            key(t.id) { TypedChar(t, i, centers[i], cell, cy, bob) }
         }
-        st.bursts.forEach { b -> key(b.id) { BurstView(b, sw, cell, cy) } }
+        st.bursts.forEach { b -> key(b.id) { BurstView(b, sw, cy, centers) } }
     }
 }
 
@@ -449,24 +514,16 @@ private fun sparklePath(r: Float): Path {
     return path
 }
 
-/// Meseszerű betű: nagyobb karakterek és erős, élénk háttérfény (glow).
+/** Lágy, a széle felé átlátszóvá simuló glow-korong. A korong négyzete pontosan körbeveszi, így semmi sem vágódik el. */
 @Composable
-private fun BigChar(ch: String, colorIdx: Int, cell: Float, glow: State<Float>? = null) {
-    val c = KidColors[colorIdx]
-    val density = LocalDensity.current
-    val outlinePx = with(density) { (cell * 0.045f).dp.toPx() }
-    val story = ch.isNotEmpty() && ch.all { it.isLetterOrDigit() }
-    val fs = (cell * 0.88f).sp
-    val light = lerp(c, Color.White, 0.50f)
-    val deep = lerp(c, Color.Black, 0.38f)
-    val fillBrush = Brush.verticalGradient(listOf(light, c, lerp(c, deep, 0.45f)))
-
+private fun GlowDisc(c: Color, cell: Float, glow: () -> Float, layer: GraphicsLayerScope.() -> Unit = {}) {
     Box(
         Modifier
-            .size(cell.dp)
+            .requiredSize((cell * GLOW_R * 2f).dp)
+            .graphicsLayer { layer() }
             .drawBehind {
-                val g = glow?.value ?: 0.4f
-                val r = size.minDimension * 0.95f
+                val g = glow()
+                val r = size.minDimension / 2f
                 drawCircle(
                     Brush.radialGradient(
                         0f to c.copy(alpha = 0.75f * g),
@@ -477,9 +534,24 @@ private fun BigChar(ch: String, colorIdx: Int, cell: Float, glow: State<Float>? 
                     ),
                     radius = r, center = center,
                 )
-            },
-        contentAlignment = Alignment.Center,
-    ) {
+            }
+    )
+}
+
+/// Meseszerű betű (glow nélkül).
+@Composable
+private fun Glyph(ch: String, colorIdx: Int, cell: Float) {
+    val c = KidColors[colorIdx]
+    val density = LocalDensity.current
+    val outlinePx = with(density) { (cell * 0.045f).dp.toPx() }
+    val story = ch.isNotEmpty() && ch.all { it.isLetterOrDigit() }
+    // dp-ből számolunk sp-t, hogy a rendszer betűméret-beállítása ne nyomja szét az elrendezést
+    val fs = with(density) { (cell * if (story) 0.88f else 0.80f).dp.toSp() }
+    val light = lerp(c, Color.White, 0.50f)
+    val deep = lerp(c, Color.Black, 0.38f)
+    val fillBrush = Brush.verticalGradient(listOf(light, c, lerp(c, deep, 0.45f)))
+
+    Box(Modifier.size(cell.dp), contentAlignment = Alignment.Center) {
         if (story) {
             Text(
                 ch,
@@ -508,31 +580,56 @@ private fun BigChar(ch: String, colorIdx: Int, cell: Float, glow: State<Float>? 
     }
 }
 
+/// Betű + háttérfény együtt (a szövegbe repülő sorhoz).
 @Composable
-private fun TypedChar(t: Typed, slot: Int, total: Int, sw: Float, cell: Float, cy: Float, bob: State<Float>) {
-    val targetX = (sw - total * cell) / 2f + slot * cell
-    val x by animateFloatAsState(targetX, spring(dampingRatio = 0.55f, stiffness = 300f), label = "x")
+private fun BigChar(ch: String, colorIdx: Int, cell: Float, glow: State<Float>? = null) {
+    Box(Modifier.size(cell.dp), contentAlignment = Alignment.Center) {
+        GlowDisc(KidColors[colorIdx], cell, { glow?.value ?: 0.4f })
+        Glyph(ch, colorIdx, cell)
+    }
+}
+
+@Composable
+private fun TypedChar(t: Typed, slot: Int, cx: Float, cell: Float, cy: Float, bob: State<Float>) {
+    val x by animateFloatAsState(cx - cell / 2f, spring(dampingRatio = 0.55f, stiffness = 300f), label = "x")
     val p = remember { Animatable(0f) }
     val glow = remember { Animatable(1f) }
-    LaunchedEffect(Unit) { p.animateTo(1f, spring(dampingRatio = 0.38f, stiffness = 220f)) }
+    // Lazább, ruganyosabb rugó: nagyobbat lendül túl, mielőtt a helyére áll.
+    LaunchedEffect(Unit) { p.animateTo(1f, spring(dampingRatio = 0.30f, stiffness = 210f)) }
     LaunchedEffect(Unit) { glow.animateTo(0.4f, tween(1100)) }
     val dir = if (t.id % 2L == 0L) -1f else 1f
+    val c = KidColors[t.colorIdx]
     Box(
         Modifier
             .offset { IntOffset(x.dp.roundToPx(), (cy - cell / 2f).dp.roundToPx()) }
-            .size(cell.dp)
-            .graphicsLayer {
+            .size(cell.dp),
+        contentAlignment = Alignment.Center,
+    ) {
+        // A glow nem lő túl (nem nő a helyfoglalása), így a képernyő szélén sem vágódik el.
+        GlowDisc(c, cell, { glow.value }) {
+            val v = min(p.value, 1f)
+            val ph = (bob.value + slot * 0.17f) * 2f * PI.toFloat()
+            val s = 0.6f + 0.4f * v
+            scaleX = s
+            scaleY = s
+            translationY = (1f - v) * (-JUMP * cell.dp.toPx()) + sin(ph) * 4.dp.toPx()
+            alpha = min(1f, v * 3f).coerceAtLeast(0f)
+            compositingStrategy = CompositingStrategy.ModulateAlpha
+        }
+        Box(
+            Modifier.graphicsLayer {
                 val v = p.value
                 val ph = (bob.value + slot * 0.17f) * 2f * PI.toFloat()
                 scaleX = v
-                scaleY = v * (1f + 0.24f * (1f - v))
-                rotationZ = (1f - v) * 34f * dir + sin(ph) * 2f
-                translationY = (1f - v) * (-0.75f * cell.dp.toPx()) + sin(ph) * 4.dp.toPx()
+                scaleY = v * (1f + 0.30f * (1f - v))
+                rotationZ = (1f - v) * 42f * dir + sin(ph) * 2f
+                translationY = (1f - v) * (-JUMP * cell.dp.toPx()) + sin(ph) * 4.dp.toPx()
                 alpha = min(1f, v * 3f).coerceAtLeast(0f)
                 compositingStrategy = CompositingStrategy.ModulateAlpha
             },
-        contentAlignment = Alignment.Center,
-    ) { BigChar(t.ch, t.colorIdx, cell, glow.asState()) }
+            contentAlignment = Alignment.Center,
+        ) { Glyph(t.ch, t.colorIdx, cell) }
+    }
 }
 
 @Composable
@@ -540,9 +637,10 @@ private fun FlyingRow(items: List<Typed>, sw: Float, cell: Float, cy: Float) {
     val p = remember { Animatable(0f) }
     LaunchedEffect(Unit) { p.animateTo(1f, tween(640, easing = LinearEasing)) }
     val ease = remember { CubicBezierEasing(0.5f, -0.4f, 0.8f, 0.6f) }
+    val centers = remember { rowCenters(items.map { it.ch }, sw, cell) }
     val hy = 104f
     items.forEachIndexed { i, t ->
-        val x = (sw - items.size * cell) / 2f + i * cell
+        val x = centers[i] - cell / 2f
         Box(
             Modifier
                 .offset { IntOffset(x.dp.roundToPx(), (cy - cell / 2f).dp.roundToPx()) }
@@ -591,13 +689,15 @@ private fun makeParticles(b: Burst): List<Particle> {
 }
 
 @Composable
-private fun BurstView(b: Burst, sw: Float, cell: Float, cy: Float) {
+private fun BurstView(b: Burst, sw: Float, cy: Float, centers: List<Float>) {
     val p = remember { Animatable(0f) }
     LaunchedEffect(Unit) { p.animateTo(1f, tween(2000, easing = LinearEasing)) }
     val parts = remember { makeParticles(b) }
+    // A kiindulópont a létrejöttekor rögzül (a karakter helyén), akkor is, ha a sor később átrendeződik.
+    val originX = remember { if (b.kind == 2) sw / 2f else centers.getOrElse(b.slot) { sw / 2f } }
     Canvas(Modifier.fillMaxSize()) {
         val s = p.value * 2f
-        val ox = (if (b.kind == 2) sw / 2f else (sw - b.total * cell) / 2f + (b.slot + 0.5f) * cell).dp.toPx()
+        val ox = originX.dp.toPx()
         val oy = cy.dp.toPx()
         for (q in parts) drawParticle(q, s, ox, oy)
     }
@@ -716,23 +816,122 @@ private fun KidButton(text: String, bg: Color, fg: Color, width: Dp, onClick: ()
     }
 }
 
+/**
+ * A billentyűzet egyetlen közös érintéskezelővel dolgozik:
+ *  - több ujj egyszerre is nyomhat gombokat (mindegyik külön hangot / karaktert ad),
+ *  - nem kell pontosan a gombra nyomni: a gombok közti résre vagy a szélére tett ujj a legközelebbi gombot találja el,
+ *  - de egy bizonyos távolságon túl (16 dp) már nem ír ki semmit.
+ */
 @Composable
 private fun FunKeyboard(fontSp: Float, modifier: Modifier, onKey: (KeySpec) -> Unit) {
-    Column(modifier, verticalArrangement = Arrangement.spacedBy(6.dp)) {
-        FunToolbar(Modifier.weight(0.85f).fillMaxWidth(), fontSp, onKey)
-        KeyRows.forEachIndexed { ri, row ->
-            Row(Modifier.weight(if (ri == KeyRows.lastIndex) 1f else 0.9f).fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                row.forEachIndexed { ki, k ->
-                    if (k.kind == K_GAP) {
-                        Spacer(Modifier.weight(k.weight))
-                    } else {
-                        KidKey(
-                            label = k.label,
-                            color = KidColors[(ri * 3 + ki) % KidColors.size],
-                            fontSp = if (k.funShape) fontSp * 0.9f else fontSp,
-                            funShape = k.funShape,
-                            modifier = Modifier.weight(k.weight).fillMaxHeight(),
-                        ) { onKey(k) }
+    val tolerancePx = with(LocalDensity.current) { 16.dp.toPx() }
+    val bounds = remember { HashMap<Int, Rect>() }          // gomb-azonosító -> terület (root koordináta)
+    val specs = remember { HashMap<Int, KeySpec>() }
+    val pressCount = remember { mutableStateMapOf<Int, Int>() } // hány ujj nyomja épp
+    val ripples = remember { mutableStateMapOf<Int, Int>() }    // hullám-számláló gombonként
+    val origin = remember { floatArrayOf(0f, 0f) }
+    val keyCb by rememberUpdatedState(onKey)
+
+    fun hit(x: Float, y: Float): Int? {
+        var best: Int? = null
+        var bestD = Float.MAX_VALUE
+        var bestC = Float.MAX_VALUE
+        for ((id, r) in bounds) {
+            val dx = max(max(r.left - x, 0f), x - r.right)
+            val dy = max(max(r.top - y, 0f), y - r.bottom)
+            val d = hypot(dx, dy)
+            if (d > tolerancePx) continue
+            val c = hypot(x - r.center.x, y - r.center.y)
+            if (d < bestD - 0.5f || (abs(d - bestD) <= 0.5f && c < bestC)) {
+                best = id
+                bestD = d
+                bestC = c
+            }
+        }
+        return best
+    }
+
+    fun keyModifier(id: Int, k: KeySpec): Modifier = Modifier.onGloballyPositioned { c ->
+        val pos = c.positionInRoot()
+        bounds[id] = Rect(pos.x, pos.y, pos.x + c.size.width, pos.y + c.size.height)
+        specs[id] = k
+    }
+
+    Box(
+        modifier
+            .onGloballyPositioned { c ->
+                val pos = c.positionInRoot()
+                origin[0] = pos.x
+                origin[1] = pos.y
+            }
+            .pointerInput(Unit) {
+                val active = HashMap<Long, Int>() // ujj azonosító -> gomb
+                awaitPointerEventScope {
+                    while (true) {
+                        val event = awaitPointerEvent(PointerEventPass.Initial)
+                        for (c in event.changes) {
+                            val pid = c.id.value
+                            if (c.pressed && !c.previousPressed) {
+                                val k = hit(c.position.x + origin[0], c.position.y + origin[1])
+                                if (k != null) {
+                                    active[pid] = k
+                                    pressCount[k] = (pressCount[k] ?: 0) + 1
+                                    ripples[k] = (ripples[k] ?: 0) + 1
+                                    specs[k]?.let { keyCb(it) }
+                                }
+                                c.consume()
+                            } else if (!c.pressed && c.previousPressed) {
+                                val k = active.remove(pid)
+                                if (k != null) {
+                                    val n = (pressCount[k] ?: 1) - 1
+                                    if (n <= 0) pressCount.remove(k) else pressCount[k] = n
+                                }
+                                c.consume()
+                            }
+                        }
+                    }
+                }
+            },
+    ) {
+        Column(
+            Modifier
+                .fillMaxSize()
+                .padding(start = 8.dp, end = 8.dp, top = 8.dp, bottom = 16.dp),
+            verticalArrangement = Arrangement.spacedBy(6.dp),
+        ) {
+            Row(Modifier.weight(0.85f).fillMaxWidth(), horizontalArrangement = Arrangement.SpaceEvenly, verticalAlignment = Alignment.CenterVertically) {
+                FunTop.forEachIndexed { i, k ->
+                    KidKey(
+                        label = k.label,
+                        color = KidColors[(i + 2) % KidColors.size],
+                        fontSp = fontSp,
+                        funShape = true,
+                        pressed = (pressCount[i] ?: 0) > 0,
+                        rippleSeq = ripples[i] ?: 0,
+                        modifier = Modifier
+                            .fillMaxHeight()
+                            .aspectRatio(1f)
+                            .then(keyModifier(i, k)),
+                    )
+                }
+            }
+            KeyRows.forEachIndexed { ri, row ->
+                Row(Modifier.weight(if (ri == KeyRows.lastIndex) 1f else 0.9f).fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                    row.forEachIndexed { ki, k ->
+                        if (k.kind == K_GAP) {
+                            Spacer(Modifier.weight(k.weight))
+                        } else {
+                            val id = 100 + ri * 20 + ki
+                            KidKey(
+                                label = k.label,
+                                color = KidColors[(ri * 3 + ki) % KidColors.size],
+                                fontSp = if (k.funShape) fontSp * 0.9f else fontSp,
+                                funShape = k.funShape,
+                                pressed = (pressCount[id] ?: 0) > 0,
+                                rippleSeq = ripples[id] ?: 0,
+                                modifier = Modifier.weight(k.weight).fillMaxHeight().then(keyModifier(id, k)),
+                            )
+                        }
                     }
                 }
             }
@@ -740,37 +939,36 @@ private fun FunKeyboard(fontSp: Float, modifier: Modifier, onKey: (KeySpec) -> U
     }
 }
 
+/** Csak megjelenítés: az érintést a FunKeyboard kezeli. */
 @Composable
-private fun FunToolbar(modifier: Modifier, fontSp: Float, onKey: (KeySpec) -> Unit) {
-    Row(modifier, horizontalArrangement = Arrangement.SpaceEvenly, verticalAlignment = Alignment.CenterVertically) {
-        FunTop.forEachIndexed { i, k ->
-            KidKey(
-                label = k.label,
-                color = KidColors[(i + 2) % KidColors.size],
-                fontSp = fontSp,
-                funShape = true,
-                modifier = Modifier
-                    .fillMaxHeight()
-                    .aspectRatio(1f),
-            ) { onKey(k) }
+private fun KidKey(
+    label: String,
+    color: Color,
+    fontSp: Float,
+    modifier: Modifier,
+    funShape: Boolean = false,
+    pressed: Boolean,
+    rippleSeq: Int,
+) {
+    var hold by remember { mutableStateOf(false) }
+    val rippleProgress = remember { Animatable(1f) }
+    // Egy nagyon gyors koppintás se maradjon láthatatlan: a lenyomott állapot legalább ~90 ms-ig látszik.
+    LaunchedEffect(rippleSeq) {
+        if (rippleSeq > 0) {
+            hold = true
+            delay(90)
+            hold = false
         }
     }
-}
-
-@Composable
-private fun KidKey(label: String, color: Color, fontSp: Float, modifier: Modifier, funShape: Boolean = false, onDown: () -> Unit) {
-    var pressed by remember { mutableStateOf(false) }
-    var ripple by remember { mutableStateOf(false) }
-    var rippleSequence by remember { mutableStateOf(0) }
-    val rippleProgress = remember { Animatable(1f) }
-    LaunchedEffect(rippleSequence) {
-        if (rippleSequence > 0) {
+    LaunchedEffect(rippleSeq) {
+        if (rippleSeq > 0) {
             rippleProgress.snapTo(0f)
             rippleProgress.animateTo(1f, tween(460, easing = FastOutSlowInEasing))
         }
     }
+    val down = pressed || hold
     val squish by animateFloatAsState(
-        if (pressed) 1f else 0f,
+        if (down) 1f else 0f,
         spring(dampingRatio = 0.4f, stiffness = 550f),
         label = "squish",
     )
@@ -779,16 +977,6 @@ private fun KidKey(label: String, color: Color, fontSp: Float, modifier: Modifie
     val fg = if (funShape) color else Background
     Box(
         modifier
-            .pointerInput(Unit) {
-                detectTapGestures(onPress = {
-                    pressed = true
-                    ripple = true
-                    rippleSequence += 1
-                    onDown()
-                    tryAwaitRelease()
-                    pressed = false
-                })
-            }
             .drawBehind {
                 val dy = (4.dp - 3.dp * squish).toPx()
                 drawRoundRect(
@@ -808,14 +996,14 @@ private fun KidKey(label: String, color: Color, fontSp: Float, modifier: Modifie
         contentAlignment = Alignment.Center,
     ) {
         Text(label, color = fg, fontSize = fontSp.sp, fontWeight = FontWeight.Bold, fontFamily = KidFont, maxLines = 1)
-        if (ripple && rippleProgress.value < 1f) {
+        if (rippleSeq > 0 && rippleProgress.value < 1f) {
             Canvas(Modifier.matchParentSize().clip(RoundedCornerShape(corner))) {
-                val p = rippleProgress.value
-                val radius = size.maxDimension * (0.12f + 0.95f * p)
+                val pr = rippleProgress.value
+                val radius = size.maxDimension * (0.12f + 0.95f * pr)
                 drawCircle(
                     Brush.radialGradient(
-                        0f to Color.White.copy(alpha = 0.24f * (1f - p)),
-                        0.65f to color.copy(alpha = 0.2f * (1f - p)),
+                        0f to Color.White.copy(alpha = 0.24f * (1f - pr)),
+                        0.65f to color.copy(alpha = 0.2f * (1f - pr)),
                         1f to Color.Transparent,
                         center = center,
                         radius = radius,
