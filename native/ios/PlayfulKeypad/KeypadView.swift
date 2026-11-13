@@ -482,10 +482,10 @@ private struct StageView: View {
         // 5 betűs sor + glow pont elfér a szélességben; magasságban is marad hely a glow-nak és az ugrásnak.
         let wCell = (w - 2 * kidEdge) / 4.32
         let vCell = (h - topReserve - 12) / (kidGlowR + 0.55)
-        let cell = min(wCell, max(vCell, wCell * 0.75))
+        let cell = min(wCell * 1.25, max(vCell, wCell * 0.75))
         let chars = vm.pending.map(\.ch)
         let fit = rowFit(chars, w: w, cell: cell)
-        let cy = min(max(h * 0.60, topReserve + cell * 0.55), h - kidGlowR * cell - 12)
+        let cy = min(max((topReserve + h) / 2, topReserve + cell * 0.55), h - kidGlowR * cell - 12) // az előzmény-panel és a billentyűzet közti szabad sáv közepe
         let centers = rowCenters(chars, w: w, cell: cell * fit)
         let flyFit = rowFit(vm.flying.map(\.ch), w: w, cell: cell)
         ZStack {
