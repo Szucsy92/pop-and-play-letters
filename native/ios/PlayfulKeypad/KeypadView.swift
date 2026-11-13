@@ -61,6 +61,8 @@ struct KeypadView: View {
     @State private var vm = KeypadViewModel()
     @State private var systemInput = ""
     @FocusState private var keyboardFocused: Bool
+    @State private var pressedKeys: [Int: Int] = [:]   // gomb -> hány ujj nyomja épp
+    @State private var rippleSeq: [Int: Int] = [:]     // gomb -> hullám-számláló
 
     var body: some View {
         GeometryReader { geo in
@@ -119,7 +121,12 @@ struct KeypadView: View {
                     .opacity(0.01)
                     .frame(width: w, height: h, alignment: .bottomLeading)
                     .onChange(of: systemInput) { _, value in
-                        if let ch = value.last { vm.press(String(ch)) }
+                        // Egyszerre több karakter is érkezhet (gyors, egyidejű nyomás). Hosszú beillesztésnél csak az utolsót vesszük.
+                        if value.count <= 4 {
+                            for ch in value { vm.press(String(ch)) }
+                        } else if let ch = value.last {
+                            vm.press(String(ch))
+                        }
                         if !value.isEmpty { systemInput = "" }
                     }
                     .onAppear { keyboardFocused = true }
@@ -150,26 +157,70 @@ struct KeypadView: View {
         }
     }
 
+    /// A gombok helye a billentyűzet-területen belül (ugyanaz az elrendezés, mint a megjelenített soroké).
+    private func keyFrames(size: CGSize) -> [CGRect] {
+        let spacing: CGFloat = 6
+        let rows = keypadRows
+        let unit = max(1, (size.height - 24 - spacing * CGFloat(rows.count - 1)) / 4.6)
+        var out: [CGRect] = []
+        var y: CGFloat = 8
+        for (ri, row) in rows.enumerated() {
+            let rh = unit * (ri == rows.count - 1 ? 1 : 0.9)
+            let keyW = (size.width - 16 - spacing * CGFloat(row.count - 1)) / CGFloat(row.count)
+            for ki in 0..<row.count {
+                out.append(CGRect(x: 8 + CGFloat(ki) * (keyW + spacing), y: y, width: keyW, height: rh))
+            }
+            y += rh + spacing
+        }
+        return out
+    }
+
+    private func keyDown(_ id: Int, _ label: String) {
+        pressedKeys[id] = (pressedKeys[id] ?? 0) + 1
+        rippleSeq[id] = (rippleSeq[id] ?? 0) + 1
+        vm.press(label)
+    }
+
+    private func keyUp(_ id: Int) {
+        // legalább ~90 ms-ig látszik a lenyomott állapot, így egy nagyon gyors koppintás sem marad észrevétlen
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.09) {
+            let n = (pressedKeys[id] ?? 1) - 1
+            if n <= 0 { pressedKeys[id] = nil } else { pressedKeys[id] = n }
+        }
+    }
+
     private func keysView(w: CGFloat) -> some View {
         let fontSize = min(32, max(16, w * 0.05))
+        let flat = keypadRows.flatMap { $0 }
         return GeometryReader { geometry in
             let verticalPadding: CGFloat = 24
             let spacing: CGFloat = 6 * CGFloat(keypadRows.count - 1)
             let unit = max(1, (geometry.size.height - verticalPadding - spacing) / 4.6)
-            VStack(spacing: 6) {
-                ForEach(0..<keypadRows.count, id: \.self) { ri in
-                    HStack(spacing: 6) {
-                        ForEach(0..<keypadRows[ri].count, id: \.self) { ki in
-                            let key = keypadRows[ri][ki]
-                            KidKey(label: key, color: kidColors[(ri * 3 + ki) % kidColors.count], size: fontSize) {
-                                vm.press(key)
+            let frames = keyFrames(size: geometry.size)
+            ZStack(alignment: .topLeading) {
+                VStack(spacing: 6) {
+                    ForEach(0..<keypadRows.count, id: \.self) { ri in
+                        HStack(spacing: 6) {
+                            ForEach(0..<keypadRows[ri].count, id: \.self) { ki in
+                                let key = keypadRows[ri][ki]
+                                let id = keypadRows[0..<ri].reduce(0) { $0 + $1.count } + ki
+                                KidKey(label: key, color: kidColors[(ri * 3 + ki) % kidColors.count], size: fontSize,
+                                       pressed: (pressedKeys[id] ?? 0) > 0, ripple: rippleSeq[id] ?? 0)
                             }
                         }
+                        .frame(height: unit * (ri == keypadRows.count - 1 ? 1 : 0.9))
                     }
-                    .frame(height: unit * (ri == keypadRows.count - 1 ? 1 : 0.9))
                 }
+                .padding(EdgeInsets(top: 8, leading: 8, bottom: 16, trailing: 8))
+                .allowsHitTesting(false)
+
+                // Közös, több ujjas érintésfelület: egyszerre több gomb is nyomható,
+                // és a gombok közti résre / szélére nyomott ujj a legközelebbi gombot találja el.
+                TouchSurface(frames: frames, tolerance: 16,
+                             onDown: { id in if id < flat.count { keyDown(id, flat[id]) } },
+                             onUp: { id in keyUp(id) })
+                    .frame(width: geometry.size.width, height: geometry.size.height)
             }
-            .padding(EdgeInsets(top: 8, leading: 8, bottom: 16, trailing: 8))
         }
     }
 
@@ -269,13 +320,83 @@ private struct KidButton: View {
     }
 }
 
+/// Több ujjas érintésfelület (UIKit): minden ujj külön gombot nyomhat.
+private struct TouchSurface: UIViewRepresentable {
+    let frames: [CGRect]
+    let tolerance: CGFloat
+    let onDown: (Int) -> Void
+    let onUp: (Int) -> Void
+
+    func makeUIView(context: Context) -> TouchView {
+        let v = TouchView()
+        v.isMultipleTouchEnabled = true
+        v.isExclusiveTouch = false
+        v.backgroundColor = .clear
+        return v
+    }
+
+    func updateUIView(_ v: TouchView, context: Context) {
+        v.frames = frames
+        v.tolerance = tolerance
+        v.onDown = onDown
+        v.onUp = onUp
+    }
+}
+
+private final class TouchView: UIView {
+    var frames: [CGRect] = []
+    var tolerance: CGFloat = 16
+    var onDown: (Int) -> Void = { _ in }
+    var onUp: (Int) -> Void = { _ in }
+    private var active: [ObjectIdentifier: Int] = [:]
+
+    override func touchesBegan(_ touches: Set<UITouch>, with event: UIEvent?) {
+        for t in touches {
+            if let k = hit(t.location(in: self)) {
+                active[ObjectIdentifier(t)] = k
+                onDown(k)
+            }
+        }
+    }
+
+    override func touchesEnded(_ touches: Set<UITouch>, with event: UIEvent?) { release(touches) }
+    override func touchesCancelled(_ touches: Set<UITouch>, with event: UIEvent?) { release(touches) }
+
+    private func release(_ touches: Set<UITouch>) {
+        for t in touches {
+            if let k = active.removeValue(forKey: ObjectIdentifier(t)) { onUp(k) }
+        }
+    }
+
+    /// A legközelebbi gomb (a belsejében 0 a távolság); a tolerancián túl nem talál el semmit.
+    private func hit(_ p: CGPoint) -> Int? {
+        var best: Int?
+        var bestD = CGFloat.greatestFiniteMagnitude
+        var bestC = CGFloat.greatestFiniteMagnitude
+        for (i, r) in frames.enumerated() {
+            let dx = max(max(r.minX - p.x, 0), p.x - r.maxX)
+            let dy = max(max(r.minY - p.y, 0), p.y - r.maxY)
+            let d = hypot(dx, dy)
+            if d > tolerance { continue }
+            let c = hypot(p.x - r.midX, p.y - r.midY)
+            if d < bestD - 0.5 || (abs(d - bestD) <= 0.5 && c < bestC) {
+                best = i
+                bestD = d
+                bestC = c
+            }
+        }
+        return best
+    }
+}
+
+/// Csak megjelenítés: az érintést a TouchSurface kezeli.
 private struct KidKey: View {
     let label: String
     let color: Color
     let size: CGFloat
-    let onDown: () -> Void
-    @State private var pressed = false
-    @State private var ripple = false
+    let pressed: Bool
+    let ripple: Int
+    @State private var rippleOn = true
 
     var body: some View {
         ZStack {
@@ -297,8 +418,8 @@ private struct KidKey: View {
                             )
                             .frame(width: max(proxy.size.width, proxy.size.height) * 1.45,
                                    height: max(proxy.size.width, proxy.size.height) * 1.45)
-                            .scaleEffect(ripple ? 1 : 0.12)
-                            .opacity(ripple ? 0 : 0.9)
+                            .scaleEffect(rippleOn ? 1 : 0.12)
+                            .opacity(rippleOn ? 0 : 0.9)
                             .position(x: proxy.size.width / 2, y: proxy.size.height / 2)
                             .allowsHitTesting(false)
                     }
@@ -309,16 +430,45 @@ private struct KidKey: View {
                 .scaleEffect(pressed ? 0.94 : 1)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .contentShape(RoundedRectangle(cornerRadius: 14.4))
-        .onLongPressGesture(minimumDuration: 0, maximumDistance: 60, pressing: { down in
-            if down {
-                ripple = false
-                withAnimation(.easeOut(duration: 0.48)) { ripple = true }
-                onDown()
-            }
-            pressed = down
-        }, perform: {})
         .animation(.spring(response: 0.25, dampingFraction: 0.42), value: pressed)
+        .onChange(of: ripple) { _, _ in
+            rippleOn = false
+            withAnimation(.easeOut(duration: 0.48)) { rippleOn = true }
+        }
+    }
+}
+
+// ---- Karakter-sor elrendezés ----
+private let kidGlowR: CGFloat = 0.80   // a glow sugara a cella méretében (a doboz szélén túl is ér)
+private let kidEdge: CGFloat = 8       // biztonsági margó a képernyő szélétől (a glow is belefér)
+private let kidJump: CGFloat = 1.2     // ennyi cellányit ugrik be felülről a karakter
+
+/// Egy karakter vízszintes "helye" a sorban cellában mérve: a keskeny betűk közelebb kerülnek egymáshoz.
+private func kidAdvance(_ ch: String) -> CGFloat {
+    let letter = !ch.isEmpty && ch.allSatisfy { $0.isLetter || $0.isNumber }
+    if !letter { return 0.95 }
+    if ch == "W" || ch == "M" { return 0.84 }
+    if ch == "I" || ch == "1" { return 0.52 }
+    return 0.68
+}
+
+/// Ha a sor (glow-val együtt) nem férne el a képernyőn, ennyiszeresére zsugorítjuk.
+private func rowFit(_ chars: [String], w: CGFloat, cell: CGFloat) -> CGFloat {
+    if chars.isEmpty { return 1 }
+    let adv = chars.map(kidAdvance)
+    let over = max(kidGlowR - (adv.first ?? 0) / 2, kidGlowR - (adv.last ?? 0) / 2)
+    let need = (adv.reduce(0, +) + 2 * over) * cell
+    return min(1, (w - 2 * kidEdge) / need)
+}
+
+/// A karakterek középpontjai, a sor a képernyő közepére igazítva.
+private func rowCenters(_ chars: [String], w: CGFloat, cell: CGFloat) -> [CGFloat] {
+    let adv = chars.map(kidAdvance)
+    var x = (w - adv.reduce(0, +) * cell) / 2
+    return adv.map { a in
+        let c = x + a * cell / 2
+        x += a * cell
+        return c
     }
 }
 
@@ -328,8 +478,16 @@ private struct StageView: View {
     let h: CGFloat
 
     var body: some View {
-        let cell = min(w * 0.19, h * 0.34)
-        let cy = min(max(h * 0.60, 64 + 134 + cell / 2 + 6), h - cell / 2 - 8)
+        let topReserve: CGFloat = 64 + 134 + 6   // előzmény-panel helye
+        // 5 betűs sor + glow pont elfér a szélességben; magasságban is marad hely a glow-nak és az ugrásnak.
+        let wCell = (w - 2 * kidEdge) / 4.32
+        let vCell = (h - topReserve - 12) / (kidGlowR + 0.55)
+        let cell = min(wCell, max(vCell, wCell * 0.75))
+        let chars = vm.pending.map(\.ch)
+        let fit = rowFit(chars, w: w, cell: cell)
+        let cy = min(max(h * 0.60, topReserve + cell * 0.55), h - kidGlowR * cell - 12)
+        let centers = rowCenters(chars, w: w, cell: cell * fit)
+        let flyFit = rowFit(vm.flying.map(\.ch), w: w, cell: cell)
         ZStack {
             HistoryPanel(history: vm.history, bump: vm.bump)
                 .frame(width: w)
@@ -338,16 +496,16 @@ private struct StageView: View {
                 .frame(width: w, height: h, alignment: .top)
 
             if !vm.flying.isEmpty {
-                FlyingRow(items: vm.flying, start: vm.flyStart, flyId: vm.flyId, w: w, cell: cell, cy: cy)
+                FlyingRow(items: vm.flying, start: vm.flyStart, flyId: vm.flyId, w: w, cell: cell * flyFit, cy: cy)
                     .id(vm.flyId)
             }
 
             ForEach(Array(vm.pending.enumerated()), id: \.element.id) { i, t in
-                TypedChar(item: t, slot: i, total: vm.pending.count, w: w, cell: cell, cy: cy)
+                TypedChar(item: t, slot: i, cx: i < centers.count ? centers[i] : w / 2, cell: cell, fit: fit, cy: cy)
             }
 
             ForEach(vm.bursts) { b in
-                BurstView(burst: b, w: w, h: h, cell: cell, cy: cy)
+                BurstView(burst: b, w: w, h: h, cy: cy, centers: centers)
             }
         }
         .frame(width: w, height: h)
@@ -397,8 +555,29 @@ private func mixColor(_ c: Color, _ to: Color, _ t: CGFloat) -> Color {
     return Color(red: r1 + (r2 - r1) * t, green: g1 + (g2 - g1) * t, blue: b1 + (b2 - b1) * t)
 }
 
-/// Meseszerű betű: nagyobb karakterek és erős, élénk háttérfény (glow).
-private struct BigChar: View {
+/// Lágy, a széle felé átlátszóvá simuló glow-korong. A korong négyzete pontosan körbeveszi, így semmi sem vágódik el.
+private struct GlowDisc: View {
+    let color: Color
+    let cell: CGFloat
+
+    var body: some View {
+        let d = cell * kidGlowR * 2
+        Circle()
+            .fill(RadialGradient(
+                stops: [
+                    .init(color: color.opacity(0.75), location: 0),
+                    .init(color: color.opacity(0.45), location: 0.45),
+                    .init(color: color.opacity(0.15), location: 0.75),
+                    .init(color: color.opacity(0), location: 1),
+                ],
+                center: .center, startRadius: 0, endRadius: d / 2))
+            .frame(width: d, height: d)
+            .allowsHitTesting(false)
+    }
+}
+
+/// Meseszerű betű (glow nélkül).
+private struct Glyph: View {
     let ch: String
     let colorIdx: Int
     let cell: CGFloat
@@ -409,19 +588,8 @@ private struct BigChar: View {
         let deep = mixColor(c, .black, 0.38)
         let o = cell * 0.035
         let story = !ch.isEmpty && ch.allSatisfy { $0.isLetter || $0.isNumber }
-        let glyph = Text(ch).font(kidFont(cell * 0.88)).lineLimit(1).fixedSize()
+        let glyph = Text(ch).font(kidFont(cell * (story ? 0.88 : 0.80))).lineLimit(1).fixedSize()
         ZStack {
-            Circle()
-                .fill(RadialGradient(
-                    stops: [
-                        .init(color: c.opacity(0.75), location: 0),
-                        .init(color: c.opacity(0.45), location: 0.45),
-                        .init(color: c.opacity(0.15), location: 0.75),
-                        .init(color: c.opacity(0), location: 1),
-                    ],
-                    center: .center, startRadius: 0, endRadius: cell * 0.95))
-                .frame(width: cell * 1.7, height: cell * 1.7)
-                .allowsHitTesting(false)
             if story {
                 ForEach(0..<8, id: \.self) { i in
                     let a = Double(i) * Double.pi / 4
@@ -438,31 +606,58 @@ private struct BigChar: View {
     }
 }
 
+/// Betű + háttérfény együtt (a szövegbe repülő sorhoz).
+private struct BigChar: View {
+    let ch: String
+    let colorIdx: Int
+    let cell: CGFloat
+
+    var body: some View {
+        ZStack {
+            GlowDisc(color: kidColors[colorIdx], cell: cell).opacity(0.4)
+            Glyph(ch: ch, colorIdx: colorIdx, cell: cell)
+        }
+        .frame(width: cell, height: cell)
+    }
+}
+
 private struct TypedChar: View {
     let item: KidTyped
     let slot: Int
-    let total: Int
-    let w: CGFloat
+    let cx: CGFloat
     let cell: CGFloat
+    let fit: CGFloat
     let cy: CGFloat
     @State private var shown = false
+    @State private var glowStrong = true
     @State private var bobbing = false
 
     var body: some View {
         let dir: Double = item.id % 2 == 0 ? -1 : 1
-        let targetX = (w - CGFloat(total) * cell) / 2 + CGFloat(slot) * cell + cell / 2
-        BigChar(ch: item.ch, colorIdx: item.colorIdx, cell: cell)
-            .scaleEffect(x: shown ? 1 : 0, y: shown ? 1 : 0)
-            .rotationEffect(.degrees(shown ? 0 : 28 * dir))
-            .offset(y: shown ? 0 : -cell * 0.5)
-            .offset(y: bobbing ? -4 : 4)
-            .animation(.easeInOut(duration: 1.2).delay(Double(slot) * 0.2).repeatForever(autoreverses: true), value: bobbing)
-            .position(x: targetX, y: cy)
-            .animation(.spring(response: 0.45, dampingFraction: 0.55), value: targetX)
-            .onAppear {
-                withAnimation(.spring(response: 0.5, dampingFraction: 0.34)) { shown = true }
-                bobbing = true
-            }
+        ZStack {
+            // A glow nem lő túl (nem nő a helyfoglalása), így a képernyő szélén sem vágódik el.
+            GlowDisc(color: kidColors[item.colorIdx], cell: cell)
+                .opacity(shown ? (glowStrong ? 1 : 0.4) : 0)
+                .scaleEffect(shown ? 1 : 0.6)
+                .offset(y: shown ? 0 : -cell * kidJump)
+            Glyph(ch: item.ch, colorIdx: item.colorIdx, cell: cell)
+                .scaleEffect(x: shown ? 1 : 0, y: shown ? 1 : 0)
+                .rotationEffect(.degrees(shown ? 0 : 42 * dir))
+                .offset(y: shown ? 0 : -cell * kidJump)
+        }
+        .frame(width: cell, height: cell)
+        .offset(y: bobbing ? -4 : 4)
+        .animation(.easeInOut(duration: 1.2).delay(Double(slot) * 0.2).repeatForever(autoreverses: true), value: bobbing)
+        .scaleEffect(fit)
+        .animation(.spring(response: 0.35, dampingFraction: 0.75), value: fit)
+        .position(x: cx, y: cy)
+        .animation(.spring(response: 0.45, dampingFraction: 0.55), value: cx)
+        .onAppear {
+            // Lazább, ruganyosabb rugó: nagyobbat lendül túl, mielőtt a helyére áll.
+            withAnimation(.spring(response: 0.55, dampingFraction: 0.30)) { shown = true }
+            withAnimation(.easeOut(duration: 1.1)) { glowStrong = false }
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) { bobbing = true }
+        }
     }
 }
 
@@ -476,19 +671,19 @@ private struct FlyingRow: View {
     @State private var done = false
 
     var body: some View {
+        let centers = rowCenters(items.map(\.ch), w: w, cell: cell)
         TimelineView(.animation(paused: done)) { ctx in
             let p = ctx.date.timeIntervalSince(start) * 1000
             ZStack {
                 ForEach(Array(items.enumerated()), id: \.element.id) { i, t in
                     let local = min(1, max(0, (p - Double(i) * 45) / 460))
                     let e = launchEase.value(local)
-                    let x = (w - CGFloat(items.count) * cell) / 2 + CGFloat(i) * cell + cell / 2
                     let sc = CGFloat(1 - 0.7 * e)
                     BigChar(ch: t.ch, colorIdx: t.colorIdx, cell: cell)
                         .scaleEffect(sc)
                         .rotationEffect(.degrees(e * Double(i - 2) * 18))
                         .opacity(local > 0.7 ? 1 - (local - 0.7) / 0.3 : 1)
-                        .position(x: x, y: cy - CGFloat(e) * (cy - 104))
+                        .position(x: centers[i], y: cy - CGFloat(e) * (cy - 104))
                 }
             }
         }
@@ -538,27 +733,26 @@ private struct BurstView: View {
     let burst: KidBurst
     let w: CGFloat
     let h: CGFloat
-    let cell: CGFloat
     let cy: CGFloat
     @State private var parts: [Particle]
+    @State private var originX: CGFloat
     @State private var done = false
 
-    init(burst: KidBurst, w: CGFloat, h: CGFloat, cell: CGFloat, cy: CGFloat) {
+    init(burst: KidBurst, w: CGFloat, h: CGFloat, cy: CGFloat, centers: [CGFloat]) {
         self.burst = burst
         self.w = w
         self.h = h
-        self.cell = cell
         self.cy = cy
         _parts = State(initialValue: makeParticles(burst))
+        // A kiindulópont a létrejöttekor rögzül (a karakter helyén), akkor is, ha a sor később átrendeződik.
+        _originX = State(initialValue: burst.kind == 2 ? w / 2 : (burst.slot < centers.count ? centers[burst.slot] : w / 2))
     }
 
     var body: some View {
         TimelineView(.animation(paused: done)) { ctx in
             Canvas { context, size in
                 let s = ctx.date.timeIntervalSince(burst.start)
-                let ox = burst.kind == 2
-                    ? size.width / 2
-                    : (size.width - CGFloat(burst.total) * cell) / 2 + (CGFloat(burst.slot) + 0.5) * cell
+                let ox = originX
                 let oy = cy
                 for q in parts { draw(q, s, ox, oy, &context) }
             }
