@@ -425,14 +425,14 @@ private fun Stage(st: KeypadUiState, modifier: Modifier) {
         val sw = maxWidth.value
         val sh = maxHeight.value
         val topReserve = 64f + 134f + 6f // előzmény-panel helye
-        // 5 betűs sor + glow pont elfér a szélességben; magasságban is marad hely a glow-nak és az ugrásnak.
+        // Alapméret: a szélesség 1,25-szöröse az 5 karakteres sornak; hosszabb sornál a rowFit() zsugorítja, hogy elférjen.
         val wCell = (sw - 2f * EDGE_DP) / 4.32f
         val vCell = (sh - topReserve - 12f) / (GLOW_R + 0.55f)
-        val cell0 = min(wCell, max(vCell, wCell * 0.75f))
+        val cell0 = min(wCell * 1.25f, max(vCell, wCell * 0.75f))
         val chars = st.pending.map { it.ch }
         val fit = rowFit(chars, sw, cell0)
         val cell by animateFloatAsState(cell0 * fit, spring(dampingRatio = 0.7f, stiffness = 350f), label = "cell")
-        val cy = min(max(sh * 0.60f, topReserve + cell0 * 0.55f), sh - GLOW_R * cell0 - 12f)
+        val cy = min(max((topReserve + sh) / 2f, topReserve + cell0 * 0.55f), sh - GLOW_R * cell0 - 12f) // az előzmény-panel és a billentyűzet közti szabad sáv közepe
         val centers = rowCenters(chars, sw, cell)
         val bob = rememberInfiniteTransition(label = "bob").animateFloat(
             initialValue = 0f,
