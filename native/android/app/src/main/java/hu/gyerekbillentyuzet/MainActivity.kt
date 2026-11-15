@@ -722,7 +722,11 @@ private fun TypedChar(t: Typed, slot: Int, cx: Float, cell: Float, cy: Float, bo
 @Composable
 private fun FlyingRow(items: List<Typed>, sw: Float, cell: Float, cy: Float, kit: GlyphKit) {
     val p = remember { Animatable(0f) }
-    LaunchedEffect(Unit) { p.animateTo(1f, tween(640, easing = LinearEasing)) }
+    // Az időzítés a sor hosszához igazodik (10 karakternél is minden karakter beér a szövegbe, nem akad meg félúton).
+    val n = items.size
+    val stagger = if (n > 1) min(45f, 180f / (n - 1)) else 0f
+    val total = 460f + (n - 1).coerceAtLeast(0) * stagger
+    LaunchedEffect(Unit) { p.animateTo(1f, tween(total.toInt(), easing = LinearEasing)) }
     val ease = remember { CubicBezierEasing(0.5f, -0.4f, 0.8f, 0.6f) }
     val centers = remember { rowCenters(items.map { it.ch }, sw, cell, kit) }
     val hy = 104f
@@ -733,13 +737,13 @@ private fun FlyingRow(items: List<Typed>, sw: Float, cell: Float, cy: Float, kit
                 .offset { IntOffset(x.dp.roundToPx(), (cy - cell / 2f).dp.roundToPx()) }
                 .size(cell.dp)
                 .graphicsLayer {
-                    val local = ((p.value * 640f - i * 45f) / 460f).coerceIn(0f, 1f)
+                    val local = ((p.value * total - i * stagger) / 460f).coerceIn(0f, 1f)
                     val e = ease.transform(local)
                     translationY = -(cy - hy).dp.toPx() * e
                     val sc = 1f - 0.7f * e
                     scaleX = sc
                     scaleY = sc
-                    rotationZ = e * (i - 2) * 18f
+                    rotationZ = e * (i - (n - 1) / 2f) * min(18f, 72f / n)
                     alpha = if (local > 0.7f) 1f - (local - 0.7f) / 0.3f else 1f
                     compositingStrategy = CompositingStrategy.ModulateAlpha
                 },

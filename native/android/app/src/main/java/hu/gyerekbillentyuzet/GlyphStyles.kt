@@ -354,9 +354,9 @@ internal fun buildStyledHistory(
 @Composable
 private fun GlyphPreview(style: GlyphStyle, rowWidth: Dp, legacy: @Composable (String, Int, Float) -> Unit) {
     val kit = rememberGlyphKit(style)
-    // A minta kitölti a sort (kb. a hely 92%-át), de nem nő az égig: a magasság legfeljebb 76 dp.
+    // A minta szinte kitölti a sort (a hely kb. 98%-át), de nem nő az égig: a magasság legfeljebb 100 dp.
     val total = "ABC123".sumOf { kit.advance(it.toString()).toDouble() }.toFloat()
-    val size = minOf(76f, (rowWidth.value - 32f - 56f) * 0.92f / total).dp
+    val size = minOf(100f, (rowWidth.value - 24f - 40f) * 0.98f / total).dp
     Row(verticalAlignment = Alignment.CenterVertically) {
         "ABC123".forEachIndexed { i, c ->
             val s = c.toString()
@@ -383,7 +383,7 @@ internal fun GlyphStyleDropdown(
     val shape = RoundedCornerShape(20.dp)
     Column(Modifier.width(width), verticalArrangement = Arrangement.spacedBy(8.dp)) {
         Box(
-            Modifier.fillMaxWidth().clip(shape).background(bg).clickable { open = !open }.padding(vertical = 12.dp, horizontal = 16.dp),
+            Modifier.fillMaxWidth().clip(shape).background(bg).clickable { open = !open }.padding(vertical = 10.dp, horizontal = 12.dp),
             contentAlignment = Alignment.Center,
         ) {
             GlyphPreview(current, width, legacy)
@@ -404,7 +404,7 @@ internal fun GlyphStyleDropdown(
                         .background(bg)
                         .then(if (st == current) Modifier.border(3.dp, accent, shape) else Modifier)
                         .clickable { onSelect(st); open = false }
-                        .padding(vertical = 12.dp, horizontal = 16.dp),
+                        .padding(vertical = 10.dp, horizontal = 12.dp),
                     contentAlignment = Alignment.Center,
                 ) { GlyphPreview(st, width, legacy) }
             }
