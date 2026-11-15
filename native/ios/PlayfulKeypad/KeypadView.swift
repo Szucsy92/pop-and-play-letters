@@ -296,7 +296,9 @@ private struct GlyphStyleDropdown: View {
 
     private func preview(_ style: GlyphStyle) -> some View {
         let kit = GlyphKit(style: style)
-        let size: CGFloat = 52
+        // A minta kitölti a sort (kb. a hely 92%-át), de nem nő az égig: a magasság legfeljebb 76 pt.
+        let total = "ABC123".reduce(CGFloat(0)) { $0 + kit.advance(String($1)) }
+        let size = min(76, (width - 32 - 56) * 0.92 / total)
         return HStack(spacing: 0) {
             ForEach(Array("ABC123".enumerated()), id: \.offset) { i, c in
                 Glyph(ch: String(c), colorIdx: i, cell: size, kit: kit)
