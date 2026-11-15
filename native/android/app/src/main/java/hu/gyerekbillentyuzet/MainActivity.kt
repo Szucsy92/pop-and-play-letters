@@ -73,7 +73,6 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
@@ -1035,7 +1034,7 @@ private fun FunKeyboard(fontSp: Float, modifier: Modifier, onKey: (KeySpec) -> U
             },
     ) {
         // A gombok mögött: lágy, színes glow, ami a gombok közti réseken átderül (és a billentyűzet fölé is kisugárzik).
-        Canvas(Modifier.fillMaxSize().clipToBounds()) { drawKeyWaves(waves, now, 1f, true) }
+        Canvas(Modifier.fillMaxSize()) { drawKeyWaves(waves, now, 1f, true) }
         Column(
             Modifier
                 .fillMaxSize()
@@ -1080,7 +1079,7 @@ private fun FunKeyboard(fontSp: Float, modifier: Modifier, onKey: (KeySpec) -> U
             }
         }
         // A gombok fölött: vékony, színes gyűrűk futnak át a gombokon is.
-        Canvas(Modifier.fillMaxSize().clipToBounds()) { drawKeyWaves(waves, now, 0.7f, false) }
+        Canvas(Modifier.fillMaxSize()) { drawKeyWaves(waves, now, 0.7f, false) }
     }
 }
 
@@ -1105,7 +1104,7 @@ private fun DrawScope.drawVeilRing(c: Offset, r: Float, band: Float, col: Color,
 
 /**
  * Színes, fátyolos fodrozódás egy gomb lenyomásától: kicsi, lágy glow + egymás után futó, színről színre váltó fátyolgyűrűk.
- * Kicsi a hatósugaruk, és a hívó a billentyűzet határára vágja őket, így a fenti karakter-előnézetbe nem lógnak bele.
+ * Kicsi a hatósugaruk; a billentyűzet tetején nincs éles vágás, szelíden túlnyúlhatnak rajta.
  */
 private fun DrawScope.drawKeyWaves(waves: List<KeyWave>, now: Long, strength: Float, glow: Boolean) {
     val reach = 120.dp.toPx()
