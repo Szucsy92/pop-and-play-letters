@@ -91,6 +91,7 @@ import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.layout.positionInRoot
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
+import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.SpanStyle
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.buildAnnotatedString
@@ -133,7 +134,7 @@ private val Secondary = Color(0xFF2E304C)
 private val MutedForeground = Color(0xFFA0A3B8)
 private val Destructive = Color(0xFFE7000B)
 private val DestructiveForeground = Color(0xFFF8FAFC)
-private val KidColors = listOf(
+internal val KidColors = listOf(
     Color(0xFFFF706A), Color(0xFFFFC31A), Color(0xFF68DB70),
     Color(0xFF00BEFA), Color(0xFFDA74F1), Color(0xFFFF9F5F),
 )
@@ -158,7 +159,7 @@ private val KeyRows: List<List<KeySpec>> = listOf(
     listOf(funKey("🍩", 1.5f), funKey("♥"), funKey("~ ~ ~", 5f, K_SPACE), funKey("★"), funKey("🚀", 1.5f, K_SEND)),
 )
 
-private val KidFont: FontFamily = try {
+internal val KidFont: FontFamily = try {
     FontFamily(Typeface.create("sans-serif-rounded", Typeface.BOLD))
 } catch (_: Throwable) {
     FontFamily.SansSerif
@@ -209,6 +210,7 @@ fun KeypadApp(vm: KeypadViewModel = viewModel()) {
     val focus = remember { FocusRequester() }
     val keyboard = LocalSoftwareKeyboardController.current
     var input by remember { mutableStateOf("") }
+    val kit = rememberGlyphKit(st.glyphStyle)
 
     LaunchedEffect(st.mode, st.parentMenu, st.exited, st.loaded) {
         if (st.loaded && st.mode == "native" && !st.parentMenu && !st.exited) {
@@ -272,6 +274,7 @@ fun KeypadApp(vm: KeypadViewModel = viewModel()) {
 
         Stage(
             st,
+            kit,
             Modifier
                 .align(Alignment.TopCenter)
                 .fillMaxWidth()
@@ -369,6 +372,15 @@ fun KeypadApp(vm: KeypadViewModel = viewModel()) {
                 KidButton("Hang: ${if (st.soundEnabled) "be 🔊" else "ki 🔇"}", Secondary, Foreground, btnW) {
                     vm.setSound(!st.soundEnabled)
                 }
+                GlyphStyleDropdown(
+                    current = st.glyphStyle,
+                    width = btnW,
+                    bg = Secondary,
+                    fg = Foreground,
+                    accent = Primary,
+                    onSelect = { vm.setGlyphStyle(it) },
+                    legacy = { ch, ci, cell -> LegacyGlyph(ch, ci, cell) },
+                )
                 KidButton("Begépelt szöveg törlése 🗑", Secondary, Foreground, btnW) { vm.clearText() }
                 KidButton("Vissza a játékhoz", Primary, Background, btnW) {
                     vm.closeMenu(); activity?.hideSystemBars()
@@ -388,29 +400,18 @@ private const val GLOW_R = 0.80f   // a glow sugara a cella méretében (a doboz
 private const val EDGE_DP = 8f     // biztonsági margó a képernyő szélétől (a glow is belefér)
 private const val JUMP = 1.2f      // ennyi cellányit ugrik be felülről a karakter
 
-/** Egy karakter vízszintes "helye" a sorban cellában mérve: a keskeny betűk közelebb kerülnek egymáshoz. */
-private fun advance(ch: String): Float {
-    val letter = ch.isNotEmpty() && ch.all { it.isLetterOrDigit() }
-    return when {
-        !letter -> 0.95f
-        ch == "W" || ch == "M" -> 0.84f
-        ch == "I" || ch == "1" -> 0.52f
-        else -> 0.68f
-    }
-}
-
 /** Ha a sor (glow-val együtt) nem férne el a képernyőn, ennyiszeresére zsugorítjuk. */
-private fun rowFit(chars: List<String>, sw: Float, cell: Float): Float {
+private fun rowFit(chars: List<String>, sw: Float, cell: Float, kit: GlyphKit): Float {
     if (chars.isEmpty()) return 1f
-    val adv = chars.map { advance(it) }
+    val adv = chars.map { kit.advance(it) }
     val over = max(GLOW_R - adv.first() / 2f, GLOW_R - adv.last() / 2f)
     val need = (adv.sum() + 2f * over) * cell
     return min(1f, (sw - 2f * EDGE_DP) / need)
 }
 
 /** A karakterek középpontjai (dp), a sor a képernyő közepére igazítva. */
-private fun rowCenters(chars: List<String>, sw: Float, cell: Float): List<Float> {
-    val adv = chars.map { advance(it) }
+private fun rowCenters(chars: List<String>, sw: Float, cell: Float, kit: GlyphKit): List<Float> {
+    val adv = chars.map { kit.advance(it) }
     var x = (sw - adv.sum() * cell) / 2f
     return adv.map { a ->
         val c = x + a * cell / 2f
@@ -420,7 +421,7 @@ private fun rowCenters(chars: List<String>, sw: Float, cell: Float): List<Float>
 }
 
 @Composable
-private fun Stage(st: KeypadUiState, modifier: Modifier) {
+private fun Stage(st: KeypadUiState, kit: GlyphKit, modifier: Modifier) {
     BoxWithConstraints(modifier) {
         val sw = maxWidth.value
         val sh = maxHeight.value
@@ -430,10 +431,10 @@ private fun Stage(st: KeypadUiState, modifier: Modifier) {
         val vCell = (sh - topReserve - 12f) / (GLOW_R + 0.55f)
         val cell0 = min(wCell * 1.25f, max(vCell, wCell * 0.75f))
         val chars = st.pending.map { it.ch }
-        val fit = rowFit(chars, sw, cell0)
+        val fit = rowFit(chars, sw, cell0, kit)
         val cell by animateFloatAsState(cell0 * fit, spring(dampingRatio = 0.7f, stiffness = 350f), label = "cell")
         val cy = min(max((topReserve + sh) / 2f, topReserve + cell0 * 0.55f), sh - GLOW_R * cell0 - 12f) // az előzmény-panel és a billentyűzet közti szabad sáv közepe
-        val centers = rowCenters(chars, sw, cell)
+        val centers = rowCenters(chars, sw, cell, kit)
         val bob = rememberInfiniteTransition(label = "bob").animateFloat(
             initialValue = 0f,
             targetValue = 1f,
@@ -442,24 +443,24 @@ private fun Stage(st: KeypadUiState, modifier: Modifier) {
         )
 
         HistoryPanel(
-            st.history, st.bump,
+            st.history, st.bump, kit,
             Modifier.align(Alignment.TopCenter).padding(top = 64.dp, start = 20.dp, end = 20.dp),
         )
         if (st.flying.isNotEmpty()) {
             key(st.flyId) {
-                val fc = cell0 * rowFit(st.flying.map { it.ch }, sw, cell0)
-                FlyingRow(st.flying, sw, fc, cy)
+                val fc = cell0 * rowFit(st.flying.map { it.ch }, sw, cell0, kit)
+                FlyingRow(st.flying, sw, fc, cy, kit)
             }
         }
         st.pending.forEachIndexed { i, t ->
-            key(t.id) { TypedChar(t, i, centers[i], cell, cy, bob) }
+            key(t.id) { TypedChar(t, i, centers[i], cell, cy, bob, kit) }
         }
         st.bursts.forEach { b -> key(b.id) { BurstView(b, sw, cy, centers) } }
     }
 }
 
 @Composable
-private fun HistoryPanel(history: String, bump: Long, modifier: Modifier) {
+private fun HistoryPanel(history: String, bump: Long, kit: GlyphKit, modifier: Modifier) {
     if (history.isEmpty()) return
     val s = remember { Animatable(1f) }
     val scroll = rememberScrollState()
@@ -472,8 +473,10 @@ private fun HistoryPanel(history: String, bump: Long, modifier: Modifier) {
     LaunchedEffect(Unit) {
         snapshotFlow { scroll.maxValue }.collectLatest { scroll.animateScrollTo(it) }
     }
-    val text = remember(history) {
-        buildAnnotatedString {
+    val styled = kit.style != GlyphStyle.DEFAULT
+    val styledText = remember(history, kit) { if (styled) buildStyledHistory(history, kit, 36f) else null }
+    val plainText = remember(history, styled) {
+        if (styled) null else buildAnnotatedString {
             var i = 0
             while (i < history.length) {
                 val cp = history.codePointAt(i)
@@ -483,6 +486,7 @@ private fun HistoryPanel(history: String, bump: Long, modifier: Modifier) {
             }
         }
     }
+    val text = styledText?.first ?: plainText ?: AnnotatedString("")
     Box(
         modifier
             .graphicsLayer { scaleX = s.value; scaleY = s.value }
@@ -492,12 +496,13 @@ private fun HistoryPanel(history: String, bump: Long, modifier: Modifier) {
     ) {
         Text(
             text,
+            inlineContent = styledText?.second ?: emptyMap(),
             modifier = Modifier
                 .fillMaxWidth()
                 .verticalScroll(scroll)
                 .padding(horizontal = 14.dp, vertical = 8.dp),
             fontSize = 30.sp,
-            lineHeight = 38.sp,
+            lineHeight = if (styled) 42.sp else 38.sp,
             fontWeight = FontWeight.Bold,
             fontFamily = KidFont,
             textAlign = TextAlign.Center,
@@ -538,9 +543,17 @@ private fun GlowDisc(c: Color, cell: Float, glow: () -> Float, layer: GraphicsLa
     )
 }
 
-/// Meseszerű betű (glow nélkül).
+/// Meseszerű betű (glow nélkül), a kiválasztott stílusban; ha ahhoz nincs rajz, az eredeti szöveges rajz.
 @Composable
-private fun Glyph(ch: String, colorIdx: Int, cell: Float) {
+private fun Glyph(ch: String, colorIdx: Int, cell: Float, kit: GlyphKit) {
+    Box(Modifier.requiredSize(cell.dp), contentAlignment = Alignment.Center) {
+        StyledGlyph(ch, colorIdx, cell, kit) { c, i, sz -> LegacyGlyph(c, i, sz) }
+    }
+}
+
+/// Az eredeti, lekerekített rendszerbetűs rajz.
+@Composable
+private fun LegacyGlyph(ch: String, colorIdx: Int, cell: Float) {
     val c = KidColors[colorIdx]
     val density = LocalDensity.current
     val outlinePx = with(density) { (cell * 0.045f).dp.toPx() }
@@ -551,7 +564,7 @@ private fun Glyph(ch: String, colorIdx: Int, cell: Float) {
     val deep = lerp(c, Color.Black, 0.38f)
     val fillBrush = Brush.verticalGradient(listOf(light, c, lerp(c, deep, 0.45f)))
 
-    Box(Modifier.size(cell.dp), contentAlignment = Alignment.Center) {
+    Box(Modifier.requiredSize(cell.dp), contentAlignment = Alignment.Center) {
         if (story) {
             Text(
                 ch,
@@ -582,15 +595,15 @@ private fun Glyph(ch: String, colorIdx: Int, cell: Float) {
 
 /// Betű + háttérfény együtt (a szövegbe repülő sorhoz).
 @Composable
-private fun BigChar(ch: String, colorIdx: Int, cell: Float, glow: State<Float>? = null) {
+private fun BigChar(ch: String, colorIdx: Int, cell: Float, kit: GlyphKit, glow: State<Float>? = null) {
     Box(Modifier.size(cell.dp), contentAlignment = Alignment.Center) {
         GlowDisc(KidColors[colorIdx], cell, { glow?.value ?: 0.4f })
-        Glyph(ch, colorIdx, cell)
+        Glyph(ch, colorIdx, cell, kit)
     }
 }
 
 @Composable
-private fun TypedChar(t: Typed, slot: Int, cx: Float, cell: Float, cy: Float, bob: State<Float>) {
+private fun TypedChar(t: Typed, slot: Int, cx: Float, cell: Float, cy: Float, bob: State<Float>, kit: GlyphKit) {
     val x by animateFloatAsState(cx - cell / 2f, spring(dampingRatio = 0.55f, stiffness = 300f), label = "x")
     val p = remember { Animatable(0f) }
     val glow = remember { Animatable(1f) }
@@ -628,16 +641,16 @@ private fun TypedChar(t: Typed, slot: Int, cx: Float, cell: Float, cy: Float, bo
                 compositingStrategy = CompositingStrategy.ModulateAlpha
             },
             contentAlignment = Alignment.Center,
-        ) { Glyph(t.ch, t.colorIdx, cell) }
+        ) { Glyph(t.ch, t.colorIdx, cell, kit) }
     }
 }
 
 @Composable
-private fun FlyingRow(items: List<Typed>, sw: Float, cell: Float, cy: Float) {
+private fun FlyingRow(items: List<Typed>, sw: Float, cell: Float, cy: Float, kit: GlyphKit) {
     val p = remember { Animatable(0f) }
     LaunchedEffect(Unit) { p.animateTo(1f, tween(640, easing = LinearEasing)) }
     val ease = remember { CubicBezierEasing(0.5f, -0.4f, 0.8f, 0.6f) }
-    val centers = remember { rowCenters(items.map { it.ch }, sw, cell) }
+    val centers = remember { rowCenters(items.map { it.ch }, sw, cell, kit) }
     val hy = 104f
     items.forEachIndexed { i, t ->
         val x = centers[i] - cell / 2f
@@ -657,7 +670,7 @@ private fun FlyingRow(items: List<Typed>, sw: Float, cell: Float, cy: Float) {
                     compositingStrategy = CompositingStrategy.ModulateAlpha
                 },
             contentAlignment = Alignment.Center,
-        ) { BigChar(t.ch, t.colorIdx, cell) }
+        ) { BigChar(t.ch, t.colorIdx, cell, kit) }
     }
 }
 
@@ -778,15 +791,23 @@ private fun polyPath(n: Int, radius: (Int) -> Float): Path {
 
 @Composable
 private fun Overlay(content: @Composable () -> Unit) {
-    Column(
+    // Görgethető, hogy a lenyitott betűtípus-választóval is elférjen kis képernyőn; különben középre igazított.
+    BoxWithConstraints(
         Modifier
             .fillMaxSize()
             .background(Background.copy(alpha = 0.95f))
-            .pointerInput(Unit) { detectTapGestures { } }
-            .padding(24.dp),
-        verticalArrangement = Arrangement.spacedBy(18.dp, Alignment.CenterVertically),
-        horizontalAlignment = Alignment.CenterHorizontally,
-    ) { content() }
+            .pointerInput(Unit) { detectTapGestures { } },
+    ) {
+        Column(
+            Modifier
+                .fillMaxWidth()
+                .heightIn(min = maxHeight)
+                .verticalScroll(rememberScrollState())
+                .padding(24.dp),
+            verticalArrangement = Arrangement.spacedBy(18.dp, Alignment.CenterVertically),
+            horizontalAlignment = Alignment.CenterHorizontally,
+        ) { content() }
+    }
 }
 
 @Composable

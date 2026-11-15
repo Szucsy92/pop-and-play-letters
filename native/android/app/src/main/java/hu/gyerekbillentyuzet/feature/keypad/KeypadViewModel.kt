@@ -3,6 +3,7 @@ package hu.gyerekbillentyuzet.feature.keypad
 import android.app.Application
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
+import hu.gyerekbillentyuzet.GlyphStyle
 import hu.gyerekbillentyuzet.app.SettingsRepository
 import hu.gyerekbillentyuzet.core.audio.NativeSoundEngine
 import kotlinx.coroutines.Job
@@ -24,6 +25,7 @@ data class KeypadUiState(
     val loaded: Boolean = false,
     val mode: String? = null, // "inner" | "native" | null (választó látszik)
     val soundEnabled: Boolean = true,
+    val glyphStyle: GlyphStyle = GlyphStyle.DEFAULT,
     val pending: List<Typed> = emptyList(), // a soron felsorakozó (max 5) karakter
     val history: String = "",               // a már "begépelt", megtartott szöveg
     val flying: List<Typed> = emptyList(),  // épp a szövegbe repülő sor
@@ -45,8 +47,8 @@ class KeypadViewModel(app: Application) : AndroidViewModel(app) {
     init {
         viewModelScope.launch {
             settings.clearLegacyHistory() // nem emlékezünk: a szöveg csak a memóriában él
-            settings.mode.combine(settings.sound) { mode, snd -> mode to snd }
-                .collect { (mode, snd) -> _state.update { it.copy(loaded = true, mode = mode, soundEnabled = snd) } }
+            combine(settings.mode, settings.sound, settings.glyphStyle) { mode, snd, glyph -> Triple(mode, snd, GlyphStyle.from(glyph)) }
+                .collect { (mode, snd, glyph) -> _state.update { it.copy(loaded = true, mode = mode, soundEnabled = snd, glyphStyle = glyph) } }
         }
     }
 
@@ -147,6 +149,11 @@ class KeypadViewModel(app: Application) : AndroidViewModel(app) {
     fun setSound(enabled: Boolean) {
         viewModelScope.launch { settings.setSound(enabled) }
         _state.update { it.copy(soundEnabled = enabled) }
+    }
+
+    fun setGlyphStyle(style: GlyphStyle) {
+        viewModelScope.launch { settings.setGlyphStyle(style.id) }
+        _state.update { it.copy(glyphStyle = style) }
     }
 
     fun showMenu() { _state.update { it.copy(parentMenu = true) } }
