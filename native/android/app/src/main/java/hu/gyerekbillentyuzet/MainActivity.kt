@@ -2,8 +2,11 @@
 
 package hu.gyerekbillentyuzet
 
+import android.content.Intent
 import android.graphics.Typeface
+import android.net.Uri
 import android.os.Bundle
+import android.provider.Settings
 import android.view.WindowManager
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.BackHandler
@@ -105,6 +108,7 @@ import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.TextUnit
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.core.content.FileProvider
 import androidx.core.view.WindowCompat
 import androidx.core.view.WindowInsetsCompat
 import androidx.core.view.WindowInsetsControllerCompat
@@ -114,6 +118,7 @@ import hu.gyerekbillentyuzet.feature.keypad.KeypadUiState
 import hu.gyerekbillentyuzet.feature.keypad.KeypadViewModel
 import hu.gyerekbillentyuzet.feature.keypad.Typed
 import hu.gyerekbillentyuzet.feature.lock.ChildLockController
+import java.io.File
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.collectLatest
 import kotlin.math.PI
@@ -199,6 +204,38 @@ class MainActivity : ComponentActivity() {
 
     fun unpinApp() {
         try { stopLockTask() } catch (e: Exception) { e.printStackTrace() }
+    }
+
+    private var pendingApk: File? = null
+
+    /** A letöltött frissítés telepítése. Kell hozzá az "ismeretlen forrás" engedély; a rendszer telepítője egy jóváhagyást kér. */
+    fun installApk(file: File) {
+        unpinApp() // a képernyőrögzítés (lock task) blokkolná a telepítő / beállítások ablakát
+        if (!packageManager.canRequestPackageInstalls()) {
+            pendingApk = file
+            try {
+                startActivity(Intent(Settings.ACTION_MANAGE_UNKNOWN_APP_SOURCES, Uri.parse("package:$packageName")))
+            } catch (e: Exception) { e.printStackTrace() }
+            return
+        }
+        try {
+            val uri = FileProvider.getUriForFile(this, "$packageName.update", file)
+            startActivity(
+                Intent(Intent.ACTION_VIEW)
+                    .setDataAndType(uri, "application/vnd.android.package-archive")
+                    .addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION),
+            )
+        } catch (e: Exception) { e.printStackTrace() }
+    }
+
+    override fun onResume() {
+        super.onResume()
+        val f = pendingApk
+        if (f != null) {
+            pendingApk = null
+            if (packageManager.canRequestPackageInstalls()) { installApk(f); return }
+        }
+        pinApp() // visszatérés a beállításokból / a telepítőből (vagy megszakított telepítés után): újra rögzítve
     }
 }
 
@@ -359,6 +396,34 @@ fun KeypadApp(vm: KeypadViewModel = viewModel()) {
                     fontFamily = KidFont,
                     textAlign = TextAlign.Center,
                 )
+            }
+        }
+
+        val upd = st.update
+        if (upd != null && st.mode != null && !st.parentMenu) {
+            Overlay {
+                KidText("Új frissítés elérhető 🎉", 28.sp, Foreground, center = true)
+                Text(
+                    upd.versionName,
+                    modifier = Modifier.widthIn(max = 320.dp),
+                    color = MutedForeground,
+                    fontSize = 15.sp,
+                    fontFamily = KidFont,
+                    textAlign = TextAlign.Center,
+                )
+                if (st.updateStage == 1) {
+                    KidText("Letöltés… ${st.updateProgress}%", 22.sp, Foreground)
+                    Box(Modifier.width(btnW).height(12.dp).clip(RoundedCornerShape(6.dp)).background(Secondary)) {
+                        Box(Modifier.fillMaxHeight().fillMaxWidth(st.updateProgress / 100f).background(Primary))
+                    }
+                } else {
+                    if (st.updateStage == 3) KidText("Nem sikerült letölteni. Próbáld újra!", 18.sp, Foreground, center = true)
+                    if (st.updateStage == 2) KidText("A telepítés elindult. Hagyd jóvá a megjelenő ablakban.", 18.sp, Foreground, center = true)
+                    KidButton(if (st.updateStage == 2) "Telepítés újra" else "Letöltés", Primary, Background, btnW) {
+                        vm.startUpdate { f -> activity?.installApk(f) }
+                    }
+                    KidButton("Később", Secondary, Foreground, btnW) { vm.dismissUpdate() }
+                }
             }
         }
 

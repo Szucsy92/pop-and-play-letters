@@ -354,7 +354,7 @@ internal fun GlyphStyleDropdown(
             Modifier.fillMaxWidth().clip(shape).background(bg).clickable { open = !open }.padding(vertical = 12.dp, horizontal = 16.dp),
             contentAlignment = Alignment.Center,
         ) {
-            GlyphPreview(current, 40.dp, legacy)
+            GlyphPreview(current, 52.dp, legacy)
             Text(
                 if (open) "▴" else "▾",
                 color = fg,
@@ -374,7 +374,7 @@ internal fun GlyphStyleDropdown(
                         .clickable { onSelect(st); open = false }
                         .padding(vertical = 12.dp, horizontal = 16.dp),
                     contentAlignment = Alignment.Center,
-                ) { GlyphPreview(st, 40.dp, legacy) }
+                ) { GlyphPreview(st, 52.dp, legacy) }
             }
         }
     }
