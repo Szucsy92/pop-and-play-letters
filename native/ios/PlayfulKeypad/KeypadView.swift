@@ -296,9 +296,9 @@ private struct GlyphStyleDropdown: View {
 
     private func preview(_ style: GlyphStyle) -> some View {
         let kit = GlyphKit(style: style)
-        // A minta kitölti a sort (kb. a hely 92%-át), de nem nő az égig: a magasság legfeljebb 76 pt.
+        // A minta szinte kitölti a sort (a hely kb. 98%-át), de nem nő az égig: a magasság legfeljebb 100 pt.
         let total = "ABC123".reduce(CGFloat(0)) { $0 + kit.advance(String($1)) }
-        let size = min(76, (width - 32 - 56) * 0.92 / total)
+        let size = min(100, (width - 24 - 40) * 0.98 / total)
         return HStack(spacing: 0) {
             ForEach(Array("ABC123".enumerated()), id: \.offset) { i, c in
                 Glyph(ch: String(c), colorIdx: i, cell: size, kit: kit)
@@ -319,8 +319,8 @@ private struct GlyphStyleDropdown: View {
                         .frame(maxWidth: .infinity, alignment: .trailing)
                 }
             }
-            .padding(.vertical, 12)
-            .padding(.horizontal, 16)
+            .padding(.vertical, 10)
+            .padding(.horizontal, 12)
             .frame(maxWidth: .infinity)
             .background(Kid.secondary, in: RoundedRectangle(cornerRadius: 20))
             .overlay {
@@ -1030,16 +1030,20 @@ private struct FlyingRow: View {
 
     var body: some View {
         let centers = rowCenters(items.map(\.ch), w: w, cell: cell, kit: kit)
+        // Az időzítés a sor hosszához igazodik (10 karakternél is minden karakter beér a szövegbe, nem akad meg félúton).
+        let n = items.count
+        let stagger: Double = n > 1 ? min(45, 180 / Double(n - 1)) : 0
+        let total: Double = 460 + Double(max(0, n - 1)) * stagger
         TimelineView(.animation(paused: done)) { ctx in
             let p = ctx.date.timeIntervalSince(start) * 1000
             ZStack {
                 ForEach(Array(items.enumerated()), id: \.element.id) { i, t in
-                    let local = min(1, max(0, (p - Double(i) * 45) / 460))
+                    let local = min(1, max(0, (p - Double(i) * stagger) / 460))
                     let e = launchEase.value(local)
                     let sc = CGFloat(1 - 0.7 * e)
                     BigChar(ch: t.ch, colorIdx: t.colorIdx, cell: cell, kit: kit)
                         .scaleEffect(sc)
-                        .rotationEffect(.degrees(e * Double(i - 2) * 18))
+                        .rotationEffect(.degrees(e * (Double(i) - Double(n - 1) / 2) * min(18, 72 / Double(max(n, 1)))))
                         .opacity(local > 0.7 ? 1 - (local - 0.7) / 0.3 : 1)
                         .position(x: centers[i], y: cy - CGFloat(e) * (cy - 104))
                 }
@@ -1047,7 +1051,7 @@ private struct FlyingRow: View {
         }
         .task(id: flyId) {
             done = false
-            try? await Task.sleep(nanoseconds: 750_000_000)
+            try? await Task.sleep(nanoseconds: UInt64((total + 110) * 1_000_000))
             done = true
         }
     }
