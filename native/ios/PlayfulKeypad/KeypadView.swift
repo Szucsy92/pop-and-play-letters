@@ -790,11 +790,12 @@ private struct StageView: View {
         // 5 betűs sor + glow pont elfér a szélességben; magasságban is marad hely a glow-nak és az ugrásnak.
         let wCell = (w - 2 * kidEdge) / 4.32
         let vCell = (h - topReserve - 12) / (kidGlowR + 0.55)
-        let cell = min(wCell * 1.25, max(vCell, wCell * 0.75))
+        // Nagyobb alapméret (kevés karakternél a betű kb. 1,7-szeres); a rowFit() a hosszabb sort úgyis a képernyőre zsugorítja.
+        let cell = min(wCell * 2.1, max(vCell * 1.25, wCell * 0.75))
         let kit = GlyphKit(style: vm.glyphStyle)
         let chars = vm.pending.map(\.ch)
         let fit = rowFit(chars, w: w, cell: cell, kit: kit)
-        let cy = min(max((topReserve + h) / 2, topReserve + cell * 0.55), h - kidGlowR * cell - 12) // az előzmény-panel és a billentyűzet közti szabad sáv közepe
+        let cy = min(max((topReserve + h) / 2, topReserve + cell * 0.5), h - cell * 0.6 - 8) // az előzmény-panel és a billentyűzet közti szabad sáv közepe
         let centers = rowCenters(chars, w: w, cell: cell * fit, kit: kit)
         let flyFit = rowFit(vm.flying.map(\.ch), w: w, cell: cell, kit: kit)
         ZStack {
