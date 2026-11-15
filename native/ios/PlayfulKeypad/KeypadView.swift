@@ -533,9 +533,10 @@ struct KeypadView: View {
 
     private func overlayPanel<Content: View>(@ViewBuilder _ content: () -> Content) -> some View {
         // Görgethető, hogy a lenyitott betűtípus-választóval is elférjen kis képernyőn; különben középre igazított.
-        GeometryReader { g in
+        let built = content()
+        return GeometryReader { g in
             ScrollView {
-                VStack(spacing: 18) { content() }
+                VStack(spacing: 18) { built }
                     .padding(24)
                     .frame(maxWidth: .infinity, minHeight: g.size.height)
             }
