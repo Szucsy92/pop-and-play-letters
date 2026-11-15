@@ -15,7 +15,7 @@ struct KidTyped: Identifiable, Equatable {
     let colorIdx: Int
 }
 
-/// Konfetti-robbanás. kind: 0 = kis pukkanás, 1 = nagy (az 5. karakternél), 2 = ünneplés a szövegbe repüléskor.
+/// Konfetti-robbanás. kind: 0 = kis pukkanás, 1 = nagy (a sor utolsó karakterénél), 2 = ünneplés a szövegbe repüléskor.
 struct KidBurst: Identifiable {
     let id: Int
     let kind: Int
@@ -39,7 +39,7 @@ final class KeypadViewModel {
     var glyphStyle: GlyphStyle = GlyphStyle(rawValue: UserDefaults.standard.string(forKey: "glyph_style") ?? "") ?? .standard {
         didSet { UserDefaults.standard.set(glyphStyle.rawValue, forKey: "glyph_style") }
     }
-    var pending: [KidTyped] = []      // a soron felsorakozó (max 5) karakter
+    var pending: [KidTyped] = []      // a soron felsorakozó (max 10) karakter
     var history: String = UserDefaults.standard.string(forKey: "typed_history") ?? ""  // megtartott szöveg
     var flying: [KidTyped] = []       // épp a szövegbe repülő sor
     var flyId = 0
@@ -53,7 +53,7 @@ final class KeypadViewModel {
     @ObservationIgnored private var taps: [Date] = []
     @ObservationIgnored private var flushTask: Task<Void, Never>?
 
-    private let rowSize = 5
+    private let rowSize = 10
     private let maxHistory = 200
 
     func press(_ value: String) {

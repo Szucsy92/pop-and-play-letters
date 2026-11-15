@@ -296,7 +296,7 @@ private struct GlyphStyleDropdown: View {
 
     private func preview(_ style: GlyphStyle) -> some View {
         let kit = GlyphKit(style: style)
-        let size: CGFloat = 40
+        let size: CGFloat = 52
         return HStack(spacing: 0) {
             ForEach(Array("ABC123".enumerated()), id: \.offset) { i, c in
                 Glyph(ch: String(c), colorIdx: i, cell: size, kit: kit)
