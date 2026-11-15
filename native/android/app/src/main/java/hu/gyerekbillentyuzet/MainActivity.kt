@@ -50,6 +50,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.foundation.text.InlineTextContent
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -540,7 +541,14 @@ private fun HistoryPanel(history: String, bump: Long, kit: GlyphKit, modifier: M
         snapshotFlow { scroll.maxValue }.collectLatest { scroll.animateScrollTo(it) }
     }
     val styled = kit.style != GlyphStyle.DEFAULT
-    val styledText = remember(history, kit) { if (styled) buildStyledHistory(history, kit, 36f) else null }
+    val inlineCache = remember(kit) { HashMap<String, InlineTextContent>() }
+    val styledText = remember(history, kit) {
+        if (!styled) null else {
+            // Képes / Modak stílusban csak az utolsó pár karaktert rajzoljuk (a teljes előzmény ezreket jelentene: megakasztaná az animációt).
+            val tail = history.takeLast(45).let { if (it.isNotEmpty() && Character.isLowSurrogate(it.first())) it.drop(1) else it }
+            buildStyledHistory(tail, kit, 36f, inlineCache)
+        }
+    }
     val plainText = remember(history, styled) {
         if (styled) null else buildAnnotatedString {
             var i = 0

@@ -1,6 +1,7 @@
 package hu.gyerekbillentyuzet
 
 import android.content.Context
+import android.graphics.BitmapFactory
 import android.graphics.Paint
 import android.graphics.RectF
 import android.graphics.Typeface
@@ -26,6 +27,7 @@ import androidx.compose.foundation.text.InlineTextContent
 import androidx.compose.foundation.text.appendInlineContent
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -39,14 +41,15 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.StrokeJoin
+import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.graphics.asComposePath
+import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.drawscope.scale
 import androidx.compose.ui.graphics.drawscope.translate
 import androidx.compose.ui.graphics.lerp
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.Placeholder
 import androidx.compose.ui.text.PlaceholderVerticalAlign
@@ -58,6 +61,8 @@ import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.core.content.res.ResourcesCompat
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 import kotlin.math.max
 import kotlin.math.min
 
@@ -225,9 +230,23 @@ internal object GlyphKits {
     }
 }
 
+/** A képes karakterek egyszer dekódolt bitmapjei (a szöveg-előzmény sok példányt rajzol, ezeket nem szabad újra és újra dekódolni). */
+internal object GlyphBitmaps {
+    private val cache = java.util.concurrent.ConcurrentHashMap<Int, ImageBitmap>()
+
+    fun get(ctx: Context, res: Int): ImageBitmap = cache.getOrPut(res) {
+        val o = BitmapFactory.Options().apply { inScaled = false }
+        BitmapFactory.decodeResource(ctx.applicationContext.resources, res, o).asImageBitmap()
+    }
+}
+
 @Composable
 internal fun rememberGlyphKit(style: GlyphStyle): GlyphKit {
     val ctx = LocalContext.current
+    // A képes stílus bitmapjeit a háttérben előre betöltjük, hogy az első használat ne akassza meg a rajzolást.
+    LaunchedEffect(style) {
+        if (style == GlyphStyle.JELLY) withContext(Dispatchers.Default) { JellyGlyphs.values.forEach { GlyphBitmaps.get(ctx, it.res) } }
+    }
     return remember(style) { GlyphKits.get(ctx, style) }
 }
 
@@ -245,9 +264,11 @@ internal fun StyledGlyph(
 ) {
     val jg = kit.jelly(ch)
     if (jg != null) {
+        val ctx = LocalContext.current
+        val bmp = remember(jg.res) { GlyphBitmaps.get(ctx, jg.res) }
         Box(Modifier.requiredSize(cell.dp)) {
             Image(
-                painter = painterResource(jg.res),
+                bitmap = bmp,
                 contentDescription = null,
                 contentScale = ContentScale.FillBounds,
                 modifier = Modifier
@@ -290,7 +311,12 @@ private fun OutlineGlyph(o: TextOutlines.Outline, pl: TextOutlines.Place, ch: St
 }
 
 /** A begépelt szöveg az adott stílusban: a karakterek beágyazott rajzok, a többi (pl. emoji) sima szöveg. */
-internal fun buildStyledHistory(history: String, kit: GlyphKit, hSp: Float): Pair<AnnotatedString, Map<String, InlineTextContent>> {
+internal fun buildStyledHistory(
+    history: String,
+    kit: GlyphKit,
+    hSp: Float,
+    cache: MutableMap<String, InlineTextContent>,
+): Pair<AnnotatedString, Map<String, InlineTextContent>> {
     val map = LinkedHashMap<String, InlineTextContent>()
     val legacyNone: @Composable (String, Int, Float) -> Unit = { _, _, _ -> }
     val text = buildAnnotatedString {
@@ -303,11 +329,14 @@ internal fun buildStyledHistory(history: String, kit: GlyphKit, hSp: Float): Pai
             if (s != " " && kit.hasGlyph(s)) {
                 val id = "g$cp"
                 if (!map.containsKey(id)) {
-                    map[id] = InlineTextContent(
-                        Placeholder((kit.advance(s) * hSp).sp, hSp.sp, PlaceholderVerticalAlign.Center),
-                    ) { _ ->
-                        Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                            StyledGlyph(s, colorIdx, hSp, kit, legacyNone)
+                    // Karakterenként egyszer létrehozott, állandó példány: így gépeléskor a régi karakterek nem rajzolódnak újra.
+                    map[id] = cache.getOrPut(id) {
+                        InlineTextContent(
+                            Placeholder((kit.advance(s) * hSp).sp, hSp.sp, PlaceholderVerticalAlign.Center),
+                        ) { _ ->
+                            Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                                StyledGlyph(s, colorIdx, hSp, kit, legacyNone)
+                            }
                         }
                     }
                 }
@@ -323,8 +352,11 @@ internal fun buildStyledHistory(history: String, kit: GlyphKit, hSp: Float): Pai
 
 /** "ABC123" minta egy stílusban (a lenyíló menühöz): ugyanazzal a rajzolással, mint a játékban. */
 @Composable
-private fun GlyphPreview(style: GlyphStyle, size: Dp, legacy: @Composable (String, Int, Float) -> Unit) {
+private fun GlyphPreview(style: GlyphStyle, rowWidth: Dp, legacy: @Composable (String, Int, Float) -> Unit) {
     val kit = rememberGlyphKit(style)
+    // A minta kitölti a sort (kb. a hely 92%-át), de nem nő az égig: a magasság legfeljebb 76 dp.
+    val total = "ABC123".sumOf { kit.advance(it.toString()).toDouble() }.toFloat()
+    val size = minOf(76f, (rowWidth.value - 32f - 56f) * 0.92f / total).dp
     Row(verticalAlignment = Alignment.CenterVertically) {
         "ABC123".forEachIndexed { i, c ->
             val s = c.toString()
@@ -354,7 +386,7 @@ internal fun GlyphStyleDropdown(
             Modifier.fillMaxWidth().clip(shape).background(bg).clickable { open = !open }.padding(vertical = 12.dp, horizontal = 16.dp),
             contentAlignment = Alignment.Center,
         ) {
-            GlyphPreview(current, 52.dp, legacy)
+            GlyphPreview(current, width, legacy)
             Text(
                 if (open) "▴" else "▾",
                 color = fg,
@@ -374,7 +406,7 @@ internal fun GlyphStyleDropdown(
                         .clickable { onSelect(st); open = false }
                         .padding(vertical = 12.dp, horizontal = 16.dp),
                     contentAlignment = Alignment.Center,
-                ) { GlyphPreview(st, 52.dp, legacy) }
+                ) { GlyphPreview(st, width, legacy) }
             }
         }
     }
