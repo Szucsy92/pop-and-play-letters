@@ -536,7 +536,7 @@ struct KeypadView: View {
                 .allowsHitTesting(false)
 
                 // A gombok fölött: vékony, színes gyűrűk futnak át a gombokon is.
-                KeyWavesLayer(waves: waves, glow: false, strength: 0.55)
+                KeyWavesLayer(waves: waves, glow: false, strength: 0.7)
                     .frame(width: geometry.size.width, height: geometry.size.height)
 
                 // Közös, több ujjas érintésfelület: egyszerre több gomb is nyomható,
@@ -729,7 +729,24 @@ private struct KeyWave: Identifiable {
     let start: Date
 }
 
-/// Színes fodrozódás egy gomb lenyomásától: táguló glow + egymás után futó, színről színre váltó gyűrűk.
+/// Fátyolos, lágy gyűrű: a sugárnál csúcsosodó, mindkét irányba átlátszóvá simuló színsáv (nincs éles vonal).
+private func drawVeilRing(_ gc: inout GraphicsContext, center c: CGPoint, r: CGFloat, band: CGFloat, color: Color, alpha: Double) {
+    if alpha <= 0.005 { return }
+    let outer = r + band
+    let inner = min(0.98, max(0, Double((r - band) / outer)))
+    let peak = min(0.99, max(inner, Double(r / outer)))
+    let g = Gradient(stops: [
+        .init(color: .clear, location: 0),
+        .init(color: .clear, location: inner),
+        .init(color: color.opacity(alpha), location: peak),
+        .init(color: .clear, location: 1),
+    ])
+    gc.fill(Path(ellipseIn: CGRect(x: c.x - outer, y: c.y - outer, width: 2 * outer, height: 2 * outer)),
+            with: .radialGradient(g, center: c, startRadius: 0, endRadius: outer))
+}
+
+/// Színes, fátyolos fodrozódás egy gomb lenyomásától: kicsi, lágy glow + egymás után futó, színről színre váltó fátyolgyűrűk.
+/// Kicsi a hatósugaruk, és a billentyűzet határára vannak vágva, így a fenti karakter-előnézetbe nem lógnak bele.
 private struct KeyWavesLayer: View {
     let waves: [KeyWave]
     let glow: Bool
@@ -738,36 +755,33 @@ private struct KeyWavesLayer: View {
     var body: some View {
         TimelineView(.animation(paused: waves.isEmpty)) { ctx in
             Canvas { gc, size in
+                let reach: CGFloat = 120
                 for w in waves {
                     let p = min(1, max(0, ctx.date.timeIntervalSince(w.start) / 1.1))
                     if p >= 1 { continue }
                     let base = kidColors[w.colorIdx % kidColors.count]
                     let ease = CGFloat(1 - (1 - p) * (1 - p))
                     let c = w.center
-                    let maxD = max(size.width, size.height)
                     if glow {
-                        let r = maxD * (0.12 + 0.6 * ease)
-                        let a = 0.6 * (1 - p) * (1 - p) * strength
+                        let r = reach * (0.35 + 0.65 * ease)
+                        let a = 0.36 * (1 - p) * (1 - p) * strength
                         gc.fill(Path(ellipseIn: CGRect(x: c.x - r, y: c.y - r, width: 2 * r, height: 2 * r)),
-                                with: .radialGradient(Gradient(colors: [base.opacity(a), base.opacity(a * 0.45), .clear]),
+                                with: .radialGradient(Gradient(colors: [base.opacity(a), base.opacity(a * 0.4), .clear]),
                                                       center: c, startRadius: 0, endRadius: r))
                     }
                     for k in 0..<3 {
-                        let d = Double(k) * 0.16
+                        let d = Double(k) * 0.18
                         let q = min(1, max(0, (p - d) / (1 - d)))
                         if q <= 0 || q >= 1 { continue }
                         let e = CGFloat(1 - (1 - q) * (1 - q))
-                        let rr = maxD * 0.85 * e + 8
+                        let rr = reach * 0.85 * e + 6
                         let col = kidColors[(w.colorIdx + k) % kidColors.count]
-                        let a = (1 - q) * strength
-                        let lw = 5 * CGFloat(1 - q) + 1.5
-                        let ring = Path(ellipseIn: CGRect(x: c.x - rr, y: c.y - rr, width: 2 * rr, height: 2 * rr))
-                        gc.stroke(ring, with: .color(col.opacity(0.22 * a)), lineWidth: lw * 3)
-                        gc.stroke(ring, with: .color(col.opacity(0.9 * a)), lineWidth: lw)
+                        drawVeilRing(&gc, center: c, r: rr, band: 14, color: col, alpha: 0.5 * (1 - q) * (1 - q) * strength)
                     }
                 }
             }
         }
+        .clipped()
         .allowsHitTesting(false)
     }
 }
@@ -1194,22 +1208,20 @@ private struct BurstView: View {
                 let s = ctx.date.timeIntervalSince(burst.start)
                 let ox = originX
                 let oy = cy
-                // Színes glow-fodrozódás: egymás után táguló, a karakter színeiben játszó gyűrűk (a nagy robbanásnál erősebben).
-                let t = min(1, max(0, s / 0.9))
-                let big: CGFloat = burst.kind == 0 ? 0.7 : 1
-                for k in 0..<3 {
-                    let d = Double(k) * 0.17
-                    let q = min(1, max(0, (t - d) / (1 - d)))
-                    if q <= 0 || q >= 1 { continue }
-                    let e = 1 - (1 - q) * (1 - q)
-                    let rr = cell * (0.45 + 2.1 * CGFloat(e)) * big
-                    let n = kidColors.count
-                    let col = kidColors[(((burst.seed + k) % n) + n) % n]
-                    let a = 1 - q
-                    let lw = 5 * CGFloat(1 - q) + 1.5
-                    let ring = Path(ellipseIn: CGRect(x: ox - rr, y: oy - rr, width: 2 * rr, height: 2 * rr))
-                    context.stroke(ring, with: .color(col.opacity(0.20 * a)), lineWidth: lw * 3.5)
-                    context.stroke(ring, with: .color(col.opacity(0.85 * a)), lineWidth: lw)
+                // Színes, fátyolos glow-fodrozódás – csak a sor beírásakor (megtelt sor) és a kivárás utáni elküldéskor, gépelés közben nem.
+                if burst.kind >= 1 {
+                    let rc = CGPoint(x: size.width / 2, y: oy)
+                    let t = min(1, max(0, s / 1.0))
+                    for k in 0..<3 {
+                        let d = Double(k) * 0.17
+                        let q = min(1, max(0, (t - d) / (1 - d)))
+                        if q <= 0 || q >= 1 { continue }
+                        let e = CGFloat(1 - (1 - q) * (1 - q))
+                        let rr = cell * (0.7 + 2.2 * e)
+                        let n = kidColors.count
+                        let col = kidColors[(((burst.seed + k) % n) + n) % n]
+                        drawVeilRing(&context, center: rc, r: rr, band: cell * 0.45, color: col, alpha: 0.55 * (1 - q) * (1 - q))
+                    }
                 }
                 for q in parts { draw(q, s, ox, oy, &context) }
             }
