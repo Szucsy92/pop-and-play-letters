@@ -5,6 +5,9 @@ import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import hu.gyerekbillentyuzet.GlyphStyle
 import hu.gyerekbillentyuzet.app.SettingsRepository
+import hu.gyerekbillentyuzet.app.UpdateInfo
+import hu.gyerekbillentyuzet.app.UpdateManager
+import java.io.File
 import hu.gyerekbillentyuzet.core.audio.NativeSoundEngine
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
@@ -18,7 +21,7 @@ import kotlinx.coroutines.launch
 /** Egy felugró nagy karakter a soron. */
 data class Typed(val id: Long, val ch: String, val colorIdx: Int)
 
-/** Konfetti-robbanás. kind: 0 = kis pukkanás, 1 = nagy (az 5. karakternél), 2 = ünneplés a szövegbe repüléskor. */
+/** Konfetti-robbanás. kind: 0 = kis pukkanás, 1 = nagy (a sor utolsó karakterénél), 2 = ünneplés a szövegbe repüléskor. */
 data class Burst(val id: Long, val kind: Int, val slot: Int, val total: Int, val seed: Int)
 
 data class KeypadUiState(
@@ -26,13 +29,16 @@ data class KeypadUiState(
     val mode: String? = null, // "inner" | "native" | null (választó látszik)
     val soundEnabled: Boolean = true,
     val glyphStyle: GlyphStyle = GlyphStyle.DEFAULT,
-    val pending: List<Typed> = emptyList(), // a soron felsorakozó (max 5) karakter
+    val pending: List<Typed> = emptyList(), // a soron felsorakozó (max 10) karakter
     val history: String = "",               // a már "begépelt", megtartott szöveg
     val flying: List<Typed> = emptyList(),  // épp a szövegbe repülő sor
     val flyId: Long = 0,
     val bump: Long = 0,
     val bursts: List<Burst> = emptyList(),
     val parentMenu: Boolean = false,
+    val update: UpdateInfo? = null,     // elérhető frissítés (null = nincs / elhalasztva)
+    val updateStage: Int = 0,           // 0 = felajánlva, 1 = letöltés, 2 = telepítés indítva, 3 = hiba
+    val updateProgress: Int = 0,
     val exited: Boolean = false,
 )
 
@@ -43,6 +49,7 @@ class KeypadViewModel(app: Application) : AndroidViewModel(app) {
     val state: StateFlow<KeypadUiState> = _state.asStateFlow()
     private var uid = 0L
     private var flushJob: Job? = null
+    private var apkFile: File? = null
 
     init {
         viewModelScope.launch {
@@ -52,7 +59,38 @@ class KeypadViewModel(app: Application) : AndroidViewModel(app) {
         }
     }
 
-    /** A sor tele (5) -> a szövegbe repül. Ez a tiszta állapotátmenet. */
+    init {
+        // Indulás után egyszer megnézzük, van-e újabb kiadás a GitHubon (hiba esetén csendben kihagyjuk).
+        viewModelScope.launch {
+            delay(1500)
+            UpdateManager.check(getApplication())?.let { info ->
+                _state.update { it.copy(update = info, updateStage = 0, updateProgress = 0) }
+            }
+        }
+    }
+
+    /** "Később": a mostani indításra elrejti az ablakot. */
+    fun dismissUpdate() { _state.update { it.copy(update = null) } }
+
+    /** "Letöltés": letölti az APK-t, majd átadja a telepítésnek (onReady). Letöltött fájlnál rögtön újra telepít. */
+    fun startUpdate(onReady: (File) -> Unit) {
+        val info = _state.value.update ?: return
+        if (_state.value.updateStage == 1) return
+        apkFile?.takeIf { _state.value.updateStage == 2 && it.exists() }?.let { onReady(it); return }
+        _state.update { it.copy(updateStage = 1, updateProgress = 0) }
+        viewModelScope.launch {
+            try {
+                val f = UpdateManager.download(getApplication(), info) { p -> _state.update { s -> s.copy(updateProgress = p) } }
+                apkFile = f
+                _state.update { it.copy(updateStage = 2) }
+                onReady(f)
+            } catch (_: Exception) {
+                _state.update { it.copy(updateStage = 3) }
+            }
+        }
+    }
+
+    /** A sor tele (10) -> a szövegbe repül. Ez a tiszta állapotátmenet. */
     private fun doFlush(s: KeypadUiState): KeypadUiState {
         if (s.pending.isEmpty()) return s
         val hist = trimHistory(s.history + s.pending.joinToString("") { it.ch })
@@ -96,7 +134,7 @@ class KeypadViewModel(app: Application) : AndroidViewModel(app) {
             sound.play(seed)
             if (flushed) sound.chime()
         }
-        // Ha a sor megtelt (5), hamar a szövegbe repül; ha a gyerek 1, 2, 3 vagy 4 karakternél megáll, az is gyorsan követi.
+        // Ha a sor megtelt (10), hamar a szövegbe repül; ha a gyerek 10-nél kevesebb karakternél megáll, az is gyorsan követi.
         flushJob?.cancel()
         val wait = if (_state.value.pending.size >= ROW) FULL_FLUSH_MS else IDLE_FLUSH_MS
         flushJob = viewModelScope.launch {
@@ -167,9 +205,9 @@ class KeypadViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     private companion object {
-        const val ROW = 5
+        const val ROW = 10
         const val MAX_HISTORY = 4000 // görgethető, de a memóriában marad
         const val IDLE_FLUSH_MS = 800L // 1-4 karakternél megállva ennyi után bekerül
-        const val FULL_FLUSH_MS = 600L // az 5. karakter után ennyivel
+        const val FULL_FLUSH_MS = 600L // az utolsó karakter után ennyivel
     }
 }
