@@ -496,11 +496,12 @@ private fun Stage(st: KeypadUiState, kit: GlyphKit, modifier: Modifier) {
         // Alapméret: a szélesség 1,25-szöröse az 5 karakteres sornak; hosszabb sornál a rowFit() zsugorítja, hogy elférjen.
         val wCell = (sw - 2f * EDGE_DP) / 4.32f
         val vCell = (sh - topReserve - 12f) / (GLOW_R + 0.55f)
-        val cell0 = min(wCell * 1.25f, max(vCell, wCell * 0.75f))
+        // Nagyobb alapméret (kevés karakternél a betű kb. 1,7-szeres); a rowFit() a hosszabb sort úgyis a képernyőre zsugorítja.
+        val cell0 = min(wCell * 2.1f, max(vCell * 1.25f, wCell * 0.75f))
         val chars = st.pending.map { it.ch }
         val fit = rowFit(chars, sw, cell0, kit)
         val cell by animateFloatAsState(cell0 * fit, spring(dampingRatio = 0.7f, stiffness = 350f), label = "cell")
-        val cy = min(max((topReserve + sh) / 2f, topReserve + cell0 * 0.55f), sh - GLOW_R * cell0 - 12f) // az előzmény-panel és a billentyűzet közti szabad sáv közepe
+        val cy = min(max((topReserve + sh) / 2f, topReserve + cell0 * 0.5f), sh - cell0 * 0.6f - 8f) // az előzmény-panel és a billentyűzet közti szabad sáv közepe
         val centers = rowCenters(chars, sw, cell, kit)
         val bob = rememberInfiniteTransition(label = "bob").animateFloat(
             initialValue = 0f,
