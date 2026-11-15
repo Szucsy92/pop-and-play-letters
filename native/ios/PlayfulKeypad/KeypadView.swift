@@ -746,15 +746,19 @@ private func drawVeilRing(_ gc: inout GraphicsContext, center c: CGPoint, r: CGF
 }
 
 /// Színes, fátyolos fodrozódás egy gomb lenyomásától: kicsi, lágy glow + egymás után futó, színről színre váltó fátyolgyűrűk.
-/// Kicsi a hatósugaruk, és a billentyűzet határára vannak vágva, így a fenti karakter-előnézetbe nem lógnak bele.
+/// Kicsi a hatósugaruk; a billentyűzet tetején nincs éles vágás, szelíden túlnyúlhatnak rajta.
 private struct KeyWavesLayer: View {
     let waves: [KeyWave]
     let glow: Bool
     let strength: Double
 
+    private let overhang: CGFloat = 120   // ennyivel nyúlhat a hullám a billentyűzet teteje fölé
+
     var body: some View {
+        GeometryReader { geo in
         TimelineView(.animation(paused: waves.isEmpty)) { ctx in
             Canvas { gc, size in
+                gc.translateBy(x: 0, y: overhang)
                 let reach: CGFloat = 120
                 for w in waves {
                     let p = min(1, max(0, ctx.date.timeIntervalSince(w.start) / 1.1))
@@ -780,8 +784,10 @@ private struct KeyWavesLayer: View {
                     }
                 }
             }
+            .frame(width: geo.size.width, height: geo.size.height + overhang)
+            .offset(y: -overhang)
         }
-        .clipped()
+        }
         .allowsHitTesting(false)
     }
 }
