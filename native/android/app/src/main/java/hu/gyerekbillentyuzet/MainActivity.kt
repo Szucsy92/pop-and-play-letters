@@ -53,6 +53,11 @@ import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.text.InlineTextContent
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.ui.layout.onSizeChanged
+import androidx.compose.runtime.withFrameMillis
+import androidx.compose.runtime.mutableFloatStateOf
+import androidx.compose.runtime.mutableLongStateOf
+import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.State
 import androidx.compose.runtime.collectAsState
@@ -492,16 +497,20 @@ private fun Stage(st: KeypadUiState, kit: GlyphKit, modifier: Modifier) {
     BoxWithConstraints(modifier) {
         val sw = maxWidth.value
         val sh = maxHeight.value
-        val topReserve = 64f + 134f + 6f // előzmény-panel helye
-        // Alapméret: a szélesség 1,25-szöröse az 5 karakteres sornak; hosszabb sornál a rowFit() zsugorítja, hogy elférjen.
+        // Adaptív sáv: az előzmény-panel valódi magassága (üresnél nincs) és az alatta lévő billentyűzet (a rendszeré vagy a beépített)
+        // tényleges magassága adja a szabad sávot; a karakter mérete és helye ehhez igazodik, így sosem lóg a billentyűzetre.
+        val density = LocalDensity.current
+        var panelH by remember { mutableFloatStateOf(0f) }
+        val topTarget = 64f + (if (st.history.isEmpty()) 0f else panelH) + 10f
+        val topReserve by animateFloatAsState(topTarget, tween(250), label = "top")
         val wCell = (sw - 2f * EDGE_DP) / 4.32f
-        val vCell = (sh - topReserve - 12f) / (GLOW_R + 0.55f)
-        // Nagyobb alapméret (kevés karakternél a betű kb. 1,7-szeres); a rowFit() a hosszabb sort úgyis a képernyőre zsugorítja.
-        val cell0 = min(wCell * 2.1f, max(vCell * 1.25f, wCell * 0.75f))
+        val band = max(sh - topReserve - 8f, 56f)
+        // A karakter + a beugrás lengése a sáv ~1,25 cellányi magasságába fér; kevés karakternél nagy, de a szélességgel is korlátozott.
+        val cell0 = min(wCell * 2.1f, max(band / 1.25f, 40f))
         val chars = st.pending.map { it.ch }
         val fit = rowFit(chars, sw, cell0, kit)
         val cell by animateFloatAsState(cell0 * fit, spring(dampingRatio = 0.7f, stiffness = 350f), label = "cell")
-        val cy = min(max((topReserve + sh) / 2f, topReserve + cell0 * 0.5f), sh - cell0 * 0.6f - 8f) // az előzmény-panel és a billentyűzet közti szabad sáv közepe
+        val cy = min(topReserve + band / 2f, sh - cell0 * 0.62f - 4f) // az előzmény-panel és a billentyűzet közti szabad sáv közepe
         val centers = rowCenters(chars, sw, cell, kit)
         val bob = rememberInfiniteTransition(label = "bob").animateFloat(
             initialValue = 0f,
@@ -513,6 +522,7 @@ private fun Stage(st: KeypadUiState, kit: GlyphKit, modifier: Modifier) {
         HistoryPanel(
             st.history, st.bump, kit,
             Modifier.align(Alignment.TopCenter).padding(top = 64.dp, start = 20.dp, end = 20.dp),
+            onHeight = { px -> panelH = px / density.density },
         )
         if (st.flying.isNotEmpty()) {
             key(st.flyId) {
@@ -523,12 +533,12 @@ private fun Stage(st: KeypadUiState, kit: GlyphKit, modifier: Modifier) {
         st.pending.forEachIndexed { i, t ->
             key(t.id) { TypedChar(t, i, centers[i], cell, cy, bob, kit) }
         }
-        st.bursts.forEach { b -> key(b.id) { BurstView(b, sw, cy, centers) } }
+        st.bursts.forEach { b -> key(b.id) { BurstView(b, sw, cy, centers, cell0) } }
     }
 }
 
 @Composable
-private fun HistoryPanel(history: String, bump: Long, kit: GlyphKit, modifier: Modifier) {
+private fun HistoryPanel(history: String, bump: Long, kit: GlyphKit, modifier: Modifier, onHeight: (Float) -> Unit = {}) {
     if (history.isEmpty()) return
     val s = remember { Animatable(1f) }
     val scroll = rememberScrollState()
@@ -567,7 +577,8 @@ private fun HistoryPanel(history: String, bump: Long, kit: GlyphKit, modifier: M
             .graphicsLayer { scaleX = s.value; scaleY = s.value }
             .clip(RoundedCornerShape(16.dp))
             .background(Color.White.copy(alpha = 0.07f))
-            .heightIn(max = 132.dp),
+            .heightIn(max = 132.dp)
+            .onSizeChanged { onHeight(it.height.toFloat()) },
     ) {
         Text(
             text,
@@ -781,7 +792,7 @@ private fun makeParticles(b: Burst): List<Particle> {
 }
 
 @Composable
-private fun BurstView(b: Burst, sw: Float, cy: Float, centers: List<Float>) {
+private fun BurstView(b: Burst, sw: Float, cy: Float, centers: List<Float>, cell: Float) {
     val p = remember { Animatable(0f) }
     LaunchedEffect(Unit) { p.animateTo(1f, tween(2000, easing = LinearEasing)) }
     val parts = remember { makeParticles(b) }
@@ -791,6 +802,21 @@ private fun BurstView(b: Burst, sw: Float, cy: Float, centers: List<Float>) {
         val s = p.value * 2f
         val ox = originX.dp.toPx()
         val oy = cy.dp.toPx()
+        // Színes glow-fodrozódás: egymás után táguló, a karakter színeiben játszó gyűrűk (a nagy robbanásnál erősebben).
+        val t = (p.value * 2000f / 900f).coerceIn(0f, 1f)
+        val big = if (b.kind == 0) 0.7f else 1f
+        for (k in 0..2) {
+            val d = k * 0.17f
+            val q = ((t - d) / (1f - d)).coerceIn(0f, 1f)
+            if (q <= 0f || q >= 1f) continue
+            val e = 1f - (1f - q) * (1f - q)
+            val rr = cell.dp.toPx() * (0.45f + 2.1f * e) * big
+            val col = KidColors[Math.floorMod(b.seed + k, KidColors.size)]
+            val a = (1f - q)
+            val w = 5.dp.toPx() * (1f - q) + 1.5f.dp.toPx()
+            drawCircle(col.copy(alpha = 0.20f * a), rr, Offset(ox, oy), style = Stroke(w * 3.5f))
+            drawCircle(col.copy(alpha = 0.85f * a), rr, Offset(ox, oy), style = Stroke(w))
+        }
         for (q in parts) drawParticle(q, s, ox, oy)
     }
 }
@@ -924,6 +950,16 @@ private fun KidButton(text: String, bg: Color, fg: Color, width: Dp, onClick: ()
  */
 @Composable
 private fun FunKeyboard(fontSp: Float, modifier: Modifier, onKey: (KeySpec) -> Unit) {
+    val waves = remember { mutableStateListOf<KeyWave>() }   // az egész billentyűzeten végigfutó színes hullámok
+    var now by remember { mutableLongStateOf(0L) }
+    val keyIdx = remember { HashMap<Int, Int>() }              // gomb-azonosító -> szín-index
+    LaunchedEffect(waves.isNotEmpty()) {
+        while (waves.isNotEmpty()) {
+            withFrameMillis { now = System.currentTimeMillis() }
+            val t = now
+            waves.removeAll { t - it.t0 > WAVE_MS }
+        }
+    }
     val tolerancePx = with(LocalDensity.current) { 16.dp.toPx() }
     val bounds = remember { HashMap<Int, Rect>() }          // gomb-azonosító -> terület (root koordináta)
     val specs = remember { HashMap<Int, KeySpec>() }
@@ -951,10 +987,11 @@ private fun FunKeyboard(fontSp: Float, modifier: Modifier, onKey: (KeySpec) -> U
         return best
     }
 
-    fun keyModifier(id: Int, k: KeySpec): Modifier = Modifier.onGloballyPositioned { c ->
+    fun keyModifier(id: Int, k: KeySpec, colorIdx: Int): Modifier = Modifier.onGloballyPositioned { c ->
         val pos = c.positionInRoot()
         bounds[id] = Rect(pos.x, pos.y, pos.x + c.size.width, pos.y + c.size.height)
         specs[id] = k
+        keyIdx[id] = colorIdx
     }
 
     Box(
@@ -977,6 +1014,10 @@ private fun FunKeyboard(fontSp: Float, modifier: Modifier, onKey: (KeySpec) -> U
                                     active[pid] = k
                                     pressCount[k] = (pressCount[k] ?: 0) + 1
                                     ripples[k] = (ripples[k] ?: 0) + 1
+                                    bounds[k]?.let { r ->
+                                        if (waves.size >= 14) waves.removeAt(0)
+                                        waves.add(KeyWave(r.center.x - origin[0], r.center.y - origin[1], keyIdx[k] ?: 0, System.currentTimeMillis()))
+                                    }
                                     specs[k]?.let { keyCb(it) }
                                 }
                                 c.consume()
@@ -993,6 +1034,8 @@ private fun FunKeyboard(fontSp: Float, modifier: Modifier, onKey: (KeySpec) -> U
                 }
             },
     ) {
+        // A gombok mögött: lágy, színes glow, ami a gombok közti réseken átderül (és a billentyűzet fölé is kisugárzik).
+        Canvas(Modifier.fillMaxSize()) { drawKeyWaves(waves, now, 1f, true) }
         Column(
             Modifier
                 .fillMaxSize()
@@ -1011,7 +1054,7 @@ private fun FunKeyboard(fontSp: Float, modifier: Modifier, onKey: (KeySpec) -> U
                         modifier = Modifier
                             .fillMaxHeight()
                             .aspectRatio(1f)
-                            .then(keyModifier(i, k)),
+                            .then(keyModifier(i, k, (i + 2) % KidColors.size)),
                     )
                 }
             }
@@ -1029,12 +1072,51 @@ private fun FunKeyboard(fontSp: Float, modifier: Modifier, onKey: (KeySpec) -> U
                                 funShape = k.funShape,
                                 pressed = (pressCount[id] ?: 0) > 0,
                                 rippleSeq = ripples[id] ?: 0,
-                                modifier = Modifier.weight(k.weight).fillMaxHeight().then(keyModifier(id, k)),
+                                modifier = Modifier.weight(k.weight).fillMaxHeight().then(keyModifier(id, k, (ri * 3 + ki) % KidColors.size)),
                             )
                         }
                     }
                 }
             }
+        }
+        // A gombok fölött: vékony, színes gyűrűk futnak át a gombokon is.
+        Canvas(Modifier.fillMaxSize()) { drawKeyWaves(waves, now, 0.55f, false) }
+    }
+}
+
+private class KeyWave(val x: Float, val y: Float, val colorIdx: Int, val t0: Long)
+private const val WAVE_MS = 1100L
+
+/** Színes fodrozódás egy gomb lenyomásától: táguló glow + egymás után futó, színről színre váltó gyűrűk. */
+private fun DrawScope.drawKeyWaves(waves: List<KeyWave>, now: Long, strength: Float, glow: Boolean) {
+    for (w in waves) {
+        val p = ((now - w.t0) / WAVE_MS.toFloat()).coerceIn(0f, 1f)
+        if (p >= 1f) continue
+        val base = KidColors[w.colorIdx % KidColors.size]
+        val ease = 1f - (1f - p) * (1f - p)
+        val c = Offset(w.x, w.y)
+        if (glow) {
+            val r = size.maxDimension * (0.12f + 0.6f * ease)
+            val a = 0.6f * (1f - p) * (1f - p) * strength
+            drawCircle(
+                Brush.radialGradient(
+                    0f to base.copy(alpha = a), 0.55f to base.copy(alpha = a * 0.45f), 1f to Color.Transparent,
+                    center = c, radius = r,
+                ),
+                radius = r, center = c,
+            )
+        }
+        for (k in 0..2) {
+            val d = k * 0.16f
+            val q = ((p - d) / (1f - d)).coerceIn(0f, 1f)
+            if (q <= 0f || q >= 1f) continue
+            val e = 1f - (1f - q) * (1f - q)
+            val rr = size.maxDimension * 0.85f * e + 8.dp.toPx()
+            val col = KidColors[(w.colorIdx + k) % KidColors.size]
+            val a = (1f - q) * strength
+            val sw = 5.dp.toPx() * (1f - q) + 1.5f.dp.toPx()
+            drawCircle(col.copy(alpha = 0.22f * a), rr, c, style = Stroke(sw * 3f))
+            drawCircle(col.copy(alpha = 0.9f * a), rr, c, style = Stroke(sw))
         }
     }
 }
