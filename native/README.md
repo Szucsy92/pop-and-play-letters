@@ -9,6 +9,7 @@ Nyisd meg az `android/` mappát Android Studio-ban (Ladybug/Koala vagy újabb ve
 - Karakteranimációk, Canvas konfetti, szintetizált hangok
 - Ruganyos gombnyomás, fátyolos körhullám
 - Szülői menü (5 koppintás / 2 mp), teljes képernyő és opcionális képernyőrögzítés
+- Betűtípus-választó a szülői menüben (Alap / Modak / gumicukor betűk + szörnyes számok), lásd `ASSETS-CREDITS.md`
 
 ## iOS
 Nyisd meg az `ios/PlayfulKeypad.xcodeproj` projektet Xcode 16+-ban; iOS 17+ szükséges.
@@ -23,3 +24,6 @@ A `.github/workflows/native-build.yml` építi mindkét platform Release változ
 - iOS: aláíratlan IPA. App Store/TestFlight vagy közvetlen eszköztelepítés előtt Apple signing certificate és provisioning profile szükséges.
 
 A rendszerfunkciók korlátozásai miatt az Android Lock Task Mode és az iOS Guided Access nem garantálható programból minden fogyasztói eszközön. iOS-en szükség lehet a Guided Access kézi bekapcsolására.
+
+## Betűtípus (karakterstílus)
+Szülői menü → lenyíló betűtípus-választó (ABC123 minta mindegyikhez): Alap, Modak, vagy gumicukor betűk + szörnyes számok. A választás mentődik. Forrásokat és licencet lásd: `ASSETS-CREDITS.md`.

@@ -1,6 +1,13 @@
 import SwiftUI
 import Observation
 
+/// A karakterek megjelenési stílusa (szülői menü → betűtípus).
+enum GlyphStyle: String, CaseIterable {
+    case standard = "default"   // az eredeti, lekerekített rendszerbetű
+    case modak                  // Modak betűtípus (OFL)
+    case jelly                  // gumicukor betűk + szörnyes számok (képek)
+}
+
 /// Egy felugró nagy karakter a soron.
 struct KidTyped: Identifiable, Equatable {
     let id: Int
@@ -28,6 +35,9 @@ final class KeypadViewModel {
     }
     var soundEnabled: Bool = UserDefaults.standard.object(forKey: "sound_enabled") as? Bool ?? true {
         didSet { UserDefaults.standard.set(soundEnabled, forKey: "sound_enabled") }
+    }
+    var glyphStyle: GlyphStyle = GlyphStyle(rawValue: UserDefaults.standard.string(forKey: "glyph_style") ?? "") ?? .standard {
+        didSet { UserDefaults.standard.set(glyphStyle.rawValue, forKey: "glyph_style") }
     }
     var pending: [KidTyped] = []      // a soron felsorakozó (max 5) karakter
     var history: String = UserDefaults.standard.string(forKey: "typed_history") ?? ""  // megtartott szöveg

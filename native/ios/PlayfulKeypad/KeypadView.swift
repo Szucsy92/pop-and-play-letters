@@ -34,6 +34,313 @@ private func kidFont(_ size: CGFloat) -> Font {
     .system(size: size, weight: .bold, design: .rounded)
 }
 
+// ---- Karakter-stílusok (szülői menü → betűtípus) ----
+
+/// Egy kép-karakter méretei a cella arányában: szélesség, magasság, és az alsó él függőleges helye (0 = a doboz teteje).
+private struct JellyMetric {
+    let w: CGFloat
+    let h: CGFloat
+    let bottom: CGFloat
+}
+
+private let jellyMetrics: [Character: JellyMetric] = [
+    "A": JellyMetric(w: 0.6226, h: 0.6247, bottom: 0.8124),
+    "B": JellyMetric(w: 0.4664, h: 0.6226, bottom: 0.8113),
+    "C": JellyMetric(w: 0.5862, h: 0.6376, bottom: 0.8188),
+    "D": JellyMetric(w: 0.5113, h: 0.6397, bottom: 0.8199),
+    "E": JellyMetric(w: 0.4579, h: 0.6269, bottom: 0.8134),
+    "F": JellyMetric(w: 0.4279, h: 0.6119, bottom: 0.8060),
+    "G": JellyMetric(w: 0.6076, h: 0.6397, bottom: 0.8199),
+    "H": JellyMetric(w: 0.5199, h: 0.6205, bottom: 0.8102),
+    "I": JellyMetric(w: 0.1904, h: 0.6205, bottom: 0.8102),
+    "J": JellyMetric(w: 0.4557, h: 0.6247, bottom: 0.8124),
+    "K": JellyMetric(w: 0.5285, h: 0.6397, bottom: 0.8199),
+    "L": JellyMetric(w: 0.4151, h: 0.6183, bottom: 0.8092),
+    "M": JellyMetric(w: 0.6953, h: 0.6226, bottom: 0.8113),
+    "N": JellyMetric(w: 0.5905, h: 0.6226, bottom: 0.8113),
+    "O": JellyMetric(w: 0.6440, h: 0.6397, bottom: 0.8199),
+    "P": JellyMetric(w: 0.4857, h: 0.6226, bottom: 0.8113),
+    "Q": JellyMetric(w: 0.6440, h: 0.7082, bottom: 0.8541),
+    "R": JellyMetric(w: 0.4707, h: 0.6611, bottom: 0.8306),
+    "S": JellyMetric(w: 0.4707, h: 0.6205, bottom: 0.8102),
+    "T": JellyMetric(w: 0.5156, h: 0.6290, bottom: 0.8145),
+    "U": JellyMetric(w: 0.5392, h: 0.6269, bottom: 0.8134),
+    "V": JellyMetric(w: 0.5691, h: 0.6419, bottom: 0.8209),
+    "W": JellyMetric(w: 0.9200, h: 0.6461, bottom: 0.8231),
+    "X": JellyMetric(w: 0.5563, h: 0.6183, bottom: 0.8092),
+    "Y": JellyMetric(w: 0.5798, h: 0.6162, bottom: 0.8081),
+    "Z": JellyMetric(w: 0.5263, h: 0.6226, bottom: 0.8113),
+    "0": JellyMetric(w: 0.6782, h: 0.6740, bottom: 0.9161),
+    "1": JellyMetric(w: 0.2610, h: 0.6483, bottom: 0.9161),
+    "2": JellyMetric(w: 0.4964, h: 0.6761, bottom: 0.9161),
+    "3": JellyMetric(w: 0.4022, h: 0.6718, bottom: 0.9161),
+    "4": JellyMetric(w: 0.5434, h: 0.7039, bottom: 0.9161),
+    "5": JellyMetric(w: 0.5841, h: 0.7167, bottom: 0.9161),
+    "6": JellyMetric(w: 0.4450, h: 0.8323, bottom: 0.9161),
+    "7": JellyMetric(w: 0.6012, h: 0.7553, bottom: 0.9161),
+    "8": JellyMetric(w: 0.5178, h: 0.7060, bottom: 0.9161),
+    "9": JellyMetric(w: 0.4429, h: 0.7125, bottom: 0.9161),
+]
+
+private let glyphGap: CGFloat = 0.10      // a karakterek közti rés a sorban (cellában)
+private let glyphMinAdvance: CGFloat = 0.5 // a legkeskenyebb karakter (I, 1) is legalább ennyi helyet kap
+private let glyphInkFit: CGFloat = 0.88    // a legszélesebb betű (W) szélessége a cella arányában (Modak)
+private let glyphSafeLo: CGFloat = 0.03    // a karakter tintája ennél közelebb nem érhet a doboz széléhez
+private let glyphSafeHi: CGFloat = 0.97
+
+/// A Modak betűtípus karakter-körvonalai (CoreText), a doboz-illesztéshez szükséges mérésekkel. A betűtípus az asset katalógusból töltődik be.
+private final class ModakOutlines {
+    struct Outline {
+        let path: CGPath   // y felfelé nő, 100 pt-os betűméretben
+        let minX: CGFloat, maxX: CGFloat, minY: CGFloat, maxY: CGFloat
+    }
+    struct Place {
+        let s: CGFloat, tx: CGFloat, ty: CGFloat   // doboz = 1, y lefelé nő
+        let top: CGFloat, bottom: CGFloat
+    }
+
+    static let shared = ModakOutlines()
+
+    private var font: CTFont?
+    private var cache: [String: Outline] = [:]
+    private var missing = Set<String>()
+    private var maxInk: CGFloat = 1
+    private var refTop: CGFloat = 64
+    private var refBottom: CGFloat = 0
+
+    private init() {
+        if let asset = NSDataAsset(name: "ModakFont"),
+           let provider = CGDataProvider(data: asset.data as CFData),
+           let cg = CGFont(provider) {
+            font = CTFontCreateWithGraphicsFont(cg, 100, nil, nil)
+        }
+        var m: CGFloat = 1
+        for c in "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789" {
+            if let o = outline(String(c)) { m = max(m, max(o.maxX - o.minX, o.maxY - o.minY)) }
+        }
+        maxInk = m
+        if let h = outline("H") { refTop = h.maxY; refBottom = h.minY }
+    }
+
+    /// nil, ha a betűtípusban nincs kontúrja (pl. emoji): ilyenkor az eredeti szövegrajzolás marad.
+    func outline(_ ch: String) -> Outline? {
+        if let o = cache[ch] { return o }
+        if missing.contains(ch) { return nil }
+        guard let font, ch.utf16.count == 1, let u = ch.utf16.first else { missing.insert(ch); return nil }
+        var glyph = CGGlyph(0)
+        var unit = u
+        guard CTFontGetGlyphsForCharacters(font, &unit, &glyph, 1), glyph != 0,
+              let path = CTFontCreatePathForGlyph(font, glyph, nil) else { missing.insert(ch); return nil }
+        let b = path.boundingBoxOfPath
+        guard b.width >= 1, b.height >= 1 else { missing.insert(ch); return nil }
+        let o = Outline(path: path, minX: b.minX, maxX: b.maxX, minY: b.minY, maxY: b.maxY)
+        cache[ch] = o
+        return o
+    }
+
+    /// A karakter helye a dobozban: állandó betűméret, középre igazítva, a doboz szélét sosem éri el.
+    func place(_ o: Outline) -> Place {
+        var s = glyphInkFit / maxInk
+        let w = (o.maxX - o.minX) * s
+        let h = (o.maxY - o.minY) * s
+        let lim = glyphSafeHi - glyphSafeLo
+        if w > lim || h > lim { s *= min(lim / w, lim / h) }
+        let tx = 0.5 - (o.minX + o.maxX) / 2 * s
+        var ty = 0.5 + (refTop + refBottom) / 2 * s
+        let top = ty - o.maxY * s
+        let bottom = ty - o.minY * s
+        if top < glyphSafeLo { ty += glyphSafeLo - top } else if bottom > glyphSafeHi { ty -= bottom - glyphSafeHi }
+        return Place(s: s, tx: tx, ty: ty, top: ty - o.maxY * s, bottom: ty - o.minY * s)
+    }
+
+    func width(_ o: Outline) -> CGFloat { (o.maxX - o.minX) * place(o).s }
+}
+
+/// Egy stílus mérései és rajzolási adatai.
+private struct GlyphKit {
+    let style: GlyphStyle
+
+    func jelly(_ ch: String) -> (name: String, m: JellyMetric)? {
+        guard style == .jelly, ch.count == 1, let c = ch.uppercased().first, let m = jellyMetrics[c] else { return nil }
+        return ("g_" + String(c).lowercased(), m)
+    }
+
+    func outline(_ ch: String) -> ModakOutlines.Outline? {
+        switch style {
+        case .standard: return nil
+        case .modak: return ModakOutlines.shared.outline(ch)
+        case .jelly: return jelly(ch) != nil ? nil : ModakOutlines.shared.outline(ch)
+        }
+    }
+
+    /// Van-e ehhez a karakterhez saját rajz ebben a stílusban (különben az eredeti szöveges rajz marad).
+    func hasGlyph(_ ch: String) -> Bool { style != .standard && (jelly(ch) != nil || outline(ch) != nil) }
+
+    /// Egy karakter vízszintes "helye" a sorban cellában mérve: a keskeny betűk közelebb kerülnek egymáshoz.
+    func advance(_ ch: String) -> CGFloat {
+        if let j = jelly(ch) { return max(glyphMinAdvance, j.m.w + glyphGap) }
+        if let o = outline(ch) { return max(glyphMinAdvance, ModakOutlines.shared.width(o) + glyphGap) }
+        let letter = !ch.isEmpty && ch.allSatisfy { $0.isLetter || $0.isNumber }
+        if !letter { return 0.95 }
+        if ch == "W" || ch == "M" { return 0.84 }
+        if ch == "I" || ch == "1" { return 0.52 }
+        return 0.68
+    }
+}
+
+private struct OutlineShape: Shape {
+    let outline: ModakOutlines.Outline
+    let place: ModakOutlines.Place
+
+    func path(in rect: CGRect) -> Path {
+        let box = min(rect.width, rect.height)
+        let t = CGAffineTransform(a: place.s * box, b: 0, c: 0, d: -place.s * box,
+                                  tx: rect.minX + place.tx * box, ty: rect.minY + place.ty * box)
+        return Path(outline.path).applying(t)
+    }
+}
+
+private struct OutlineGlyphView: View {
+    let outline: ModakOutlines.Outline
+    let ch: String
+    let colorIdx: Int
+    let cell: CGFloat
+
+    var body: some View {
+        let c = kidColors[colorIdx]
+        let light = mixColor(c, .white, 0.5)
+        let deep = mixColor(c, .black, 0.38)
+        let place = ModakOutlines.shared.place(outline)
+        let shape = OutlineShape(outline: outline, place: place)
+        let story = !ch.isEmpty && ch.allSatisfy { $0.isLetter || $0.isNumber }
+        ZStack {
+            if story {
+                shape.stroke(deep, style: StrokeStyle(lineWidth: cell * 0.07, lineCap: .round, lineJoin: .round))
+                shape.fill(LinearGradient(
+                    colors: [light, c, mixColor(c, deep, 0.45)],
+                    startPoint: UnitPoint(x: 0.5, y: place.top),
+                    endPoint: UnitPoint(x: 0.5, y: place.bottom)))
+            } else {
+                shape.fill(c)
+            }
+        }
+        .frame(width: cell, height: cell)
+    }
+}
+
+private struct JellyImage: View {
+    let name: String
+    let m: JellyMetric
+    let cell: CGFloat
+
+    var body: some View {
+        Image(name)
+            .resizable()
+            .interpolation(.high)
+            .frame(width: cell * m.w, height: cell * m.h)
+            .position(x: cell / 2, y: cell * (m.bottom - m.h / 2))
+            .frame(width: cell, height: cell)
+    }
+}
+
+/// Sortörő elrendezés a begépelt szöveghez (soronként középre igazítva).
+private struct FlowLayout: Layout {
+    var lineSpacing: CGFloat = 0
+
+    private struct Row {
+        var items: [(index: Int, size: CGSize)] = []
+        var width: CGFloat = 0
+        var height: CGFloat = 0
+    }
+
+    private func rows(maxWidth: CGFloat, subviews: Subviews) -> [Row] {
+        var result: [Row] = [Row()]
+        for (i, sv) in subviews.enumerated() {
+            let size = sv.sizeThatFits(.unspecified)
+            if !result[result.count - 1].items.isEmpty, result[result.count - 1].width + size.width > maxWidth {
+                result.append(Row())
+            }
+            result[result.count - 1].items.append((i, size))
+            result[result.count - 1].width += size.width
+            result[result.count - 1].height = max(result[result.count - 1].height, size.height)
+        }
+        return result
+    }
+
+    func sizeThatFits(proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) -> CGSize {
+        let r = rows(maxWidth: proposal.width ?? .infinity, subviews: subviews)
+        let h = r.reduce(0) { $0 + $1.height } + CGFloat(max(0, r.count - 1)) * lineSpacing
+        return CGSize(width: proposal.width ?? (r.map(\.width).max() ?? 0), height: h)
+    }
+
+    func placeSubviews(in bounds: CGRect, proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) {
+        var y = bounds.minY
+        for row in rows(maxWidth: bounds.width, subviews: subviews) {
+            var x = bounds.minX + (bounds.width - row.width) / 2
+            for item in row.items {
+                subviews[item.index].place(at: CGPoint(x: x, y: y + (row.height - item.size.height) / 2),
+                                           proposal: ProposedViewSize(item.size))
+                x += item.size.width
+            }
+            y += row.height + lineSpacing
+        }
+    }
+}
+
+/// Lenyíló betűtípus-választó: a fejléc az aktuális stílust mutatja, lenyitva mindhárom minta ("ABC123") látszik.
+private struct GlyphStyleDropdown: View {
+    let current: GlyphStyle
+    let width: CGFloat
+    let onSelect: (GlyphStyle) -> Void
+    @State private var open = false
+
+    private func preview(_ style: GlyphStyle) -> some View {
+        let kit = GlyphKit(style: style)
+        let size: CGFloat = 40
+        return HStack(spacing: 0) {
+            ForEach(Array("ABC123".enumerated()), id: \.offset) { i, c in
+                Glyph(ch: String(c), colorIdx: i, cell: size, kit: kit)
+                    .frame(width: kit.advance(String(c)) * size, height: size)
+            }
+        }
+    }
+
+    private func row(_ style: GlyphStyle, header: Bool) -> some View {
+        Button {
+            if header { open.toggle() } else { onSelect(style); open = false }
+        } label: {
+            ZStack {
+                preview(style)
+                if header {
+                    Text(open ? "▴" : "▾")
+                        .font(kidFont(24)).foregroundStyle(Kid.foreground)
+                        .frame(maxWidth: .infinity, alignment: .trailing)
+                }
+            }
+            .padding(.vertical, 12)
+            .padding(.horizontal, 16)
+            .frame(maxWidth: .infinity)
+            .background(Kid.secondary, in: RoundedRectangle(cornerRadius: 20))
+            .overlay {
+                if !header && style == current {
+                    RoundedRectangle(cornerRadius: 20).stroke(Kid.primary, lineWidth: 3)
+                }
+            }
+        }
+        .buttonStyle(.plain)
+    }
+
+    var body: some View {
+        VStack(spacing: 8) {
+            row(current, header: true)
+            if open {
+                ForEach(GlyphStyle.allCases, id: \.self) { s in row(s, header: false) }
+            }
+        }
+        .frame(width: width)
+    }
+}
+
 // ---- Animációs segédek ----
 private struct CubicBezier {
     let x1: Double, y1: Double, x2: Double, y2: Double
@@ -225,12 +532,18 @@ struct KeypadView: View {
     }
 
     private func overlayPanel<Content: View>(@ViewBuilder _ content: () -> Content) -> some View {
-        VStack(spacing: 18) { content() }
-            .padding(24)
-            .frame(maxWidth: .infinity, maxHeight: .infinity)
-            .background(Kid.background.opacity(0.95))
-            .contentShape(Rectangle())
-            .onTapGesture {}
+        // Görgethető, hogy a lenyitott betűtípus-választóval is elférjen kis képernyőn; különben középre igazított.
+        GeometryReader { g in
+            ScrollView {
+                VStack(spacing: 18) { content() }
+                    .padding(24)
+                    .frame(maxWidth: .infinity, minHeight: g.size.height)
+            }
+            .scrollBounceBehavior(.basedOnSize)
+        }
+        .background(Kid.background.opacity(0.95))
+        .contentShape(Rectangle())
+        .onTapGesture {}
     }
 
     private func chooser(btnW: CGFloat) -> some View {
@@ -256,6 +569,7 @@ struct KeypadView: View {
                       bg: Kid.secondary, fg: Kid.foreground, width: btnW) { vm.toggleMode() }
             KidButton(text: "Hang: \(vm.soundEnabled ? "be 🔊" : "ki 🔇")",
                       bg: Kid.secondary, fg: Kid.foreground, width: btnW) { vm.soundEnabled.toggle() }
+            GlyphStyleDropdown(current: vm.glyphStyle, width: btnW) { vm.glyphStyle = $0 }
             KidButton(text: "Begépelt szöveg törlése 🗑", bg: Kid.secondary, fg: Kid.foreground, width: btnW) {
                 vm.clearText()
             }
@@ -443,27 +757,18 @@ private let kidGlowR: CGFloat = 0.80   // a glow sugara a cella méretében (a d
 private let kidEdge: CGFloat = 8       // biztonsági margó a képernyő szélétől (a glow is belefér)
 private let kidJump: CGFloat = 1.2     // ennyi cellányit ugrik be felülről a karakter
 
-/// Egy karakter vízszintes "helye" a sorban cellában mérve: a keskeny betűk közelebb kerülnek egymáshoz.
-private func kidAdvance(_ ch: String) -> CGFloat {
-    let letter = !ch.isEmpty && ch.allSatisfy { $0.isLetter || $0.isNumber }
-    if !letter { return 0.95 }
-    if ch == "W" || ch == "M" { return 0.84 }
-    if ch == "I" || ch == "1" { return 0.52 }
-    return 0.68
-}
-
 /// Ha a sor (glow-val együtt) nem férne el a képernyőn, ennyiszeresére zsugorítjuk.
-private func rowFit(_ chars: [String], w: CGFloat, cell: CGFloat) -> CGFloat {
+private func rowFit(_ chars: [String], w: CGFloat, cell: CGFloat, kit: GlyphKit) -> CGFloat {
     if chars.isEmpty { return 1 }
-    let adv = chars.map(kidAdvance)
+    let adv = chars.map { kit.advance($0) }
     let over = max(kidGlowR - (adv.first ?? 0) / 2, kidGlowR - (adv.last ?? 0) / 2)
     let need = (adv.reduce(0, +) + 2 * over) * cell
     return min(1, (w - 2 * kidEdge) / need)
 }
 
 /// A karakterek középpontjai, a sor a képernyő közepére igazítva.
-private func rowCenters(_ chars: [String], w: CGFloat, cell: CGFloat) -> [CGFloat] {
-    let adv = chars.map(kidAdvance)
+private func rowCenters(_ chars: [String], w: CGFloat, cell: CGFloat, kit: GlyphKit) -> [CGFloat] {
+    let adv = chars.map { kit.advance($0) }
     var x = (w - adv.reduce(0, +) * cell) / 2
     return adv.map { a in
         let c = x + a * cell / 2
@@ -483,25 +788,26 @@ private struct StageView: View {
         let wCell = (w - 2 * kidEdge) / 4.32
         let vCell = (h - topReserve - 12) / (kidGlowR + 0.55)
         let cell = min(wCell * 1.25, max(vCell, wCell * 0.75))
+        let kit = GlyphKit(style: vm.glyphStyle)
         let chars = vm.pending.map(\.ch)
-        let fit = rowFit(chars, w: w, cell: cell)
+        let fit = rowFit(chars, w: w, cell: cell, kit: kit)
         let cy = min(max((topReserve + h) / 2, topReserve + cell * 0.55), h - kidGlowR * cell - 12) // az előzmény-panel és a billentyűzet közti szabad sáv közepe
-        let centers = rowCenters(chars, w: w, cell: cell * fit)
-        let flyFit = rowFit(vm.flying.map(\.ch), w: w, cell: cell)
+        let centers = rowCenters(chars, w: w, cell: cell * fit, kit: kit)
+        let flyFit = rowFit(vm.flying.map(\.ch), w: w, cell: cell, kit: kit)
         ZStack {
-            HistoryPanel(history: vm.history, bump: vm.bump)
+            HistoryPanel(history: vm.history, bump: vm.bump, kit: kit)
                 .frame(width: w)
                 .padding(.top, 64)
                 .padding(.horizontal, 20)
                 .frame(width: w, height: h, alignment: .top)
 
             if !vm.flying.isEmpty {
-                FlyingRow(items: vm.flying, start: vm.flyStart, flyId: vm.flyId, w: w, cell: cell * flyFit, cy: cy)
+                FlyingRow(items: vm.flying, start: vm.flyStart, flyId: vm.flyId, w: w, cell: cell * flyFit, cy: cy, kit: kit)
                     .id(vm.flyId)
             }
 
             ForEach(Array(vm.pending.enumerated()), id: \.element.id) { i, t in
-                TypedChar(item: t, slot: i, cx: i < centers.count ? centers[i] : w / 2, cell: cell, fit: fit, cy: cy)
+                TypedChar(item: t, slot: i, cx: i < centers.count ? centers[i] : w / 2, cell: cell, fit: fit, cy: cy, kit: kit)
             }
 
             ForEach(vm.bursts) { b in
@@ -516,7 +822,29 @@ private struct StageView: View {
 private struct HistoryPanel: View {
     let history: String
     let bump: Int
+    let kit: GlyphKit
     @State private var scale: CGFloat = 1
+
+    /// A begépelt szöveg a kiválasztott stílusban: a karakterek rajzok, a többi (pl. emoji) sima szöveg.
+    private var styledText: some View {
+        let h: CGFloat = 36
+        return FlowLayout(lineSpacing: 4) {
+            ForEach(Array(history.suffix(30).enumerated()), id: \.offset) { _, c in
+                let s = String(c)
+                let code = Int(c.unicodeScalars.first?.value ?? 0)
+                if c == " " {
+                    Color.clear.frame(width: h * 0.4, height: h)
+                } else if kit.hasGlyph(s) {
+                    Glyph(ch: s, colorIdx: code % kidColors.count, cell: h, kit: kit)
+                        .frame(width: kit.advance(s) * h, height: h)
+                } else {
+                    Text(s).font(kidFont(30)).foregroundStyle(kidColors[code % kidColors.count]).frame(height: h)
+                }
+            }
+        }
+        .frame(maxWidth: .infinity, maxHeight: 3 * (h + 4), alignment: .bottom)
+        .clipped()
+    }
 
     var body: some View {
         if history.isEmpty {
@@ -526,12 +854,18 @@ private struct HistoryPanel: View {
                 let code = Int(c.unicodeScalars.first?.value ?? 0)
                 return acc + Text(String(c)).foregroundColor(kidColors[code % kidColors.count])
             }
-            colored
-                .font(kidFont(30))
-                .tracking(2)
-                .lineSpacing(4)
-                .lineLimit(3)
-                .multilineTextAlignment(.center)
+            Group {
+                if kit.style == .standard {
+                    colored
+                        .font(kidFont(30))
+                        .tracking(2)
+                        .lineSpacing(4)
+                        .lineLimit(3)
+                        .multilineTextAlignment(.center)
+                } else {
+                    styledText
+                }
+            }
                 .frame(maxWidth: .infinity)
                 .padding(.horizontal, 14)
                 .padding(.vertical, 8)
@@ -576,8 +910,26 @@ private struct GlowDisc: View {
     }
 }
 
-/// Meseszerű betű (glow nélkül).
+/// Meseszerű betű (glow nélkül), a kiválasztott stílusban; ha ahhoz nincs rajz, az eredeti szöveges rajz.
 private struct Glyph: View {
+    let ch: String
+    let colorIdx: Int
+    let cell: CGFloat
+    let kit: GlyphKit
+
+    var body: some View {
+        if let j = kit.jelly(ch) {
+            JellyImage(name: j.name, m: j.m, cell: cell)
+        } else if let o = kit.outline(ch) {
+            OutlineGlyphView(outline: o, ch: ch, colorIdx: colorIdx, cell: cell)
+        } else {
+            LegacyGlyph(ch: ch, colorIdx: colorIdx, cell: cell)
+        }
+    }
+}
+
+/// Az eredeti, lekerekített rendszerbetűs rajz.
+private struct LegacyGlyph: View {
     let ch: String
     let colorIdx: Int
     let cell: CGFloat
@@ -611,11 +963,12 @@ private struct BigChar: View {
     let ch: String
     let colorIdx: Int
     let cell: CGFloat
+    let kit: GlyphKit
 
     var body: some View {
         ZStack {
             GlowDisc(color: kidColors[colorIdx], cell: cell).opacity(0.4)
-            Glyph(ch: ch, colorIdx: colorIdx, cell: cell)
+            Glyph(ch: ch, colorIdx: colorIdx, cell: cell, kit: kit)
         }
         .frame(width: cell, height: cell)
     }
@@ -628,6 +981,7 @@ private struct TypedChar: View {
     let cell: CGFloat
     let fit: CGFloat
     let cy: CGFloat
+    let kit: GlyphKit
     @State private var shown = false
     @State private var glowStrong = true
     @State private var bobbing = false
@@ -640,7 +994,7 @@ private struct TypedChar: View {
                 .opacity(shown ? (glowStrong ? 1 : 0.4) : 0)
                 .scaleEffect(shown ? 1 : 0.6)
                 .offset(y: shown ? 0 : -cell * kidJump)
-            Glyph(ch: item.ch, colorIdx: item.colorIdx, cell: cell)
+            Glyph(ch: item.ch, colorIdx: item.colorIdx, cell: cell, kit: kit)
                 .scaleEffect(x: shown ? 1 : 0, y: shown ? 1 : 0)
                 .rotationEffect(.degrees(shown ? 0 : 42 * dir))
                 .offset(y: shown ? 0 : -cell * kidJump)
@@ -668,10 +1022,11 @@ private struct FlyingRow: View {
     let w: CGFloat
     let cell: CGFloat
     let cy: CGFloat
+    let kit: GlyphKit
     @State private var done = false
 
     var body: some View {
-        let centers = rowCenters(items.map(\.ch), w: w, cell: cell)
+        let centers = rowCenters(items.map(\.ch), w: w, cell: cell, kit: kit)
         TimelineView(.animation(paused: done)) { ctx in
             let p = ctx.date.timeIntervalSince(start) * 1000
             ZStack {
@@ -679,7 +1034,7 @@ private struct FlyingRow: View {
                     let local = min(1, max(0, (p - Double(i) * 45) / 460))
                     let e = launchEase.value(local)
                     let sc = CGFloat(1 - 0.7 * e)
-                    BigChar(ch: t.ch, colorIdx: t.colorIdx, cell: cell)
+                    BigChar(ch: t.ch, colorIdx: t.colorIdx, cell: cell, kit: kit)
                         .scaleEffect(sc)
                         .rotationEffect(.degrees(e * Double(i - 2) * 18))
                         .opacity(local > 0.7 ? 1 - (local - 0.7) / 0.3 : 1)
