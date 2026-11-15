@@ -27,3 +27,6 @@ A rendszerfunkciók korlátozásai miatt az Android Lock Task Mode és az iOS Gu
 
 ## Betűtípus (karakterstílus)
 Szülői menü → lenyíló betűtípus-választó (ABC123 minta mindegyikhez): Alap, Modak, vagy gumicukor betűk + szörnyes számok. A választás mentődik. Forrásokat és licencet lásd: `ASSETS-CREDITS.md`.
+
+## Frissítés az alkalmazásból (Android)
+Indításkor az app megnézi a GitHub legfrissebb kiadását (`releases/latest`). Ha újabb (a címke végi futásszám nagyobb a telepített versionCode-nál), megjelenik az „Új frissítés elérhető” ablak: **Később** vagy **Letöltés**. A Letöltés az APK-t az appon belül letölti, majd elindítja a telepítést (a rendszer egyszer az „ismeretlen forrásból telepítés” engedélyt és a telepítés jóváhagyását kéri). Feltételek: a repó nyilvános legyen, a kiadások ugyanazzal a kulccsal legyenek aláírva (ANDROID_KEYSTORE_* titkok), mert aláíratlan vagy más kulcsú APK nem frissíthet egy telepített appot. A repó nevét a CI a `GITHUB_REPOSITORY` változóból adja a buildnek, külön beállítás nem kell. iOS-en az app nem tud önmagát telepíteni, ott nincs ilyen ablak.
