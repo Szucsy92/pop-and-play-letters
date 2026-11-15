@@ -13,6 +13,9 @@ android {
         // A CI felülírja a verziót (APP_VERSION_CODE / APP_VERSION_NAME); helyben marad az alapérték.
         versionCode = System.getenv("APP_VERSION_CODE")?.toIntOrNull() ?: 1
         versionName = System.getenv("APP_VERSION_NAME") ?: "1.0.0"
+        // A frissítés-ellenőrzés a CI-ban a GITHUB_REPOSITORY (tulajdonos/repó) alapján keres; helyi buildnél üres = kikapcsolva.
+        val updateRepo = System.getenv("GITHUB_REPOSITORY") ?: ""
+        buildConfigField("String", "UPDATE_REPO", "\"$updateRepo\"")
     }
     // Aláírás csak akkor, ha a CI megadja a kulcstárat (környezeti változókból, soha nem a forrásból).
     val keystorePath = System.getenv("ANDROID_KEYSTORE_FILE")
@@ -35,7 +38,10 @@ android {
         sourceCompatibility = JavaVersion.VERSION_17
         targetCompatibility = JavaVersion.VERSION_17
     }
-    buildFeatures { compose = true }
+    buildFeatures {
+        compose = true
+        buildConfig = true
+    }
 }
 kotlin {
     compilerOptions {
