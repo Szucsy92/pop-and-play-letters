@@ -73,6 +73,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
@@ -802,20 +803,19 @@ private fun BurstView(b: Burst, sw: Float, cy: Float, centers: List<Float>, cell
         val s = p.value * 2f
         val ox = originX.dp.toPx()
         val oy = cy.dp.toPx()
-        // Színes glow-fodrozódás: egymás után táguló, a karakter színeiben játszó gyűrűk (a nagy robbanásnál erősebben).
-        val t = (p.value * 2000f / 900f).coerceIn(0f, 1f)
-        val big = if (b.kind == 0) 0.7f else 1f
-        for (k in 0..2) {
-            val d = k * 0.17f
-            val q = ((t - d) / (1f - d)).coerceIn(0f, 1f)
-            if (q <= 0f || q >= 1f) continue
-            val e = 1f - (1f - q) * (1f - q)
-            val rr = cell.dp.toPx() * (0.45f + 2.1f * e) * big
-            val col = KidColors[Math.floorMod(b.seed + k, KidColors.size)]
-            val a = (1f - q)
-            val w = 5.dp.toPx() * (1f - q) + 1.5f.dp.toPx()
-            drawCircle(col.copy(alpha = 0.20f * a), rr, Offset(ox, oy), style = Stroke(w * 3.5f))
-            drawCircle(col.copy(alpha = 0.85f * a), rr, Offset(ox, oy), style = Stroke(w))
+        // Színes, fátyolos glow-fodrozódás – csak a sor beírásakor (megtelt sor) és a kivárás utáni elküldéskor, gépelés közben nem.
+        if (b.kind >= 1) {
+            val rc = Offset(size.width / 2f, oy)
+            val t = (p.value * 2000f / 1000f).coerceIn(0f, 1f)
+            for (k in 0..2) {
+                val d = k * 0.17f
+                val q = ((t - d) / (1f - d)).coerceIn(0f, 1f)
+                if (q <= 0f || q >= 1f) continue
+                val e = 1f - (1f - q) * (1f - q)
+                val rr = cell.dp.toPx() * (0.7f + 2.2f * e)
+                val col = KidColors[Math.floorMod(b.seed + k, KidColors.size)]
+                drawVeilRing(rc, rr, cell.dp.toPx() * 0.45f, col, 0.55f * (1f - q) * (1f - q))
+            }
         }
         for (q in parts) drawParticle(q, s, ox, oy)
     }
@@ -1035,7 +1035,7 @@ private fun FunKeyboard(fontSp: Float, modifier: Modifier, onKey: (KeySpec) -> U
             },
     ) {
         // A gombok mögött: lágy, színes glow, ami a gombok közti réseken átderül (és a billentyűzet fölé is kisugárzik).
-        Canvas(Modifier.fillMaxSize()) { drawKeyWaves(waves, now, 1f, true) }
+        Canvas(Modifier.fillMaxSize().clipToBounds()) { drawKeyWaves(waves, now, 1f, true) }
         Column(
             Modifier
                 .fillMaxSize()
@@ -1080,15 +1080,35 @@ private fun FunKeyboard(fontSp: Float, modifier: Modifier, onKey: (KeySpec) -> U
             }
         }
         // A gombok fölött: vékony, színes gyűrűk futnak át a gombokon is.
-        Canvas(Modifier.fillMaxSize()) { drawKeyWaves(waves, now, 0.55f, false) }
+        Canvas(Modifier.fillMaxSize().clipToBounds()) { drawKeyWaves(waves, now, 0.7f, false) }
     }
 }
 
 private class KeyWave(val x: Float, val y: Float, val colorIdx: Int, val t0: Long)
 private const val WAVE_MS = 1100L
 
-/** Színes fodrozódás egy gomb lenyomásától: táguló glow + egymás után futó, színről színre váltó gyűrűk. */
+/** Fátyolos, lágy gyűrű: a sugárnál csúcsosodó, mindkét irányba átlátszóvá simuló színsáv (nincs éles vonal). */
+private fun DrawScope.drawVeilRing(c: Offset, r: Float, band: Float, col: Color, alpha: Float) {
+    if (alpha <= 0.005f) return
+    val outer = r + band
+    drawCircle(
+        Brush.radialGradient(
+            0f to Color.Transparent,
+            ((r - band) / outer).coerceIn(0f, 0.98f) to Color.Transparent,
+            (r / outer).coerceIn(0f, 0.99f) to col.copy(alpha = alpha),
+            1f to Color.Transparent,
+            center = c, radius = outer,
+        ),
+        radius = outer, center = c,
+    )
+}
+
+/**
+ * Színes, fátyolos fodrozódás egy gomb lenyomásától: kicsi, lágy glow + egymás után futó, színről színre váltó fátyolgyűrűk.
+ * Kicsi a hatósugaruk, és a hívó a billentyűzet határára vágja őket, így a fenti karakter-előnézetbe nem lógnak bele.
+ */
 private fun DrawScope.drawKeyWaves(waves: List<KeyWave>, now: Long, strength: Float, glow: Boolean) {
+    val reach = 120.dp.toPx()
     for (w in waves) {
         val p = ((now - w.t0) / WAVE_MS.toFloat()).coerceIn(0f, 1f)
         if (p >= 1f) continue
@@ -1096,27 +1116,24 @@ private fun DrawScope.drawKeyWaves(waves: List<KeyWave>, now: Long, strength: Fl
         val ease = 1f - (1f - p) * (1f - p)
         val c = Offset(w.x, w.y)
         if (glow) {
-            val r = size.maxDimension * (0.12f + 0.6f * ease)
-            val a = 0.6f * (1f - p) * (1f - p) * strength
+            val r = reach * (0.35f + 0.65f * ease)
+            val a = 0.36f * (1f - p) * (1f - p) * strength
             drawCircle(
                 Brush.radialGradient(
-                    0f to base.copy(alpha = a), 0.55f to base.copy(alpha = a * 0.45f), 1f to Color.Transparent,
+                    0f to base.copy(alpha = a), 0.6f to base.copy(alpha = a * 0.4f), 1f to Color.Transparent,
                     center = c, radius = r,
                 ),
                 radius = r, center = c,
             )
         }
         for (k in 0..2) {
-            val d = k * 0.16f
+            val d = k * 0.18f
             val q = ((p - d) / (1f - d)).coerceIn(0f, 1f)
             if (q <= 0f || q >= 1f) continue
             val e = 1f - (1f - q) * (1f - q)
-            val rr = size.maxDimension * 0.85f * e + 8.dp.toPx()
+            val rr = reach * 0.85f * e + 6.dp.toPx()
             val col = KidColors[(w.colorIdx + k) % KidColors.size]
-            val a = (1f - q) * strength
-            val sw = 5.dp.toPx() * (1f - q) + 1.5f.dp.toPx()
-            drawCircle(col.copy(alpha = 0.22f * a), rr, c, style = Stroke(sw * 3f))
-            drawCircle(col.copy(alpha = 0.9f * a), rr, c, style = Stroke(sw))
+            drawVeilRing(c, rr, 14.dp.toPx(), col, 0.5f * (1f - q) * (1f - q) * strength)
         }
     }
 }
